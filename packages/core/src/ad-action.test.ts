@@ -11,6 +11,7 @@ const budgetAction = {
   to: 300000,
   reason: "CPA 7 ngày gần nhất cao hơn mục tiêu 38%",
   requires_confirm: true,
+  confirmed_by: "user_2210",
 };
 
 describe("hợp đồng AdAction", () => {
@@ -52,6 +53,7 @@ describe("hợp đồng AdAction", () => {
       to: "DISABLE",
       reason: "CTR giảm liên tục 5 ngày",
       requires_confirm: true,
+      confirmed_by: "user_2210",
     });
     expect(inverseAdAction(pause).op).toBe("resume");
   });
@@ -77,6 +79,7 @@ describe("hợp đồng AdAction", () => {
         to: "DISABLE",
         reason: "CPA gấp đôi mục tiêu",
         requires_confirm: true,
+        confirmed_by: "user_2210",
       }),
     );
     // ad_ids khai type "string" trong inputSchema thật (chuỗi JSON của mảng),
@@ -103,6 +106,7 @@ describe("hợp đồng AdAction", () => {
         to: "DISABLE",
         reason: "CTR giảm liên tục 5 ngày",
         requires_confirm: true,
+        confirmed_by: "user_2210",
       }),
     );
     expect(pauseCall.args.advertiser_id).toBe("tt_88231");
@@ -134,6 +138,7 @@ describe("hợp đồng AdAction", () => {
         to: "DISABLE",
         reason: "CTR giảm liên tục 5 ngày",
         requires_confirm: true,
+        confirmed_by: "user_2210",
       }),
     );
     expect(call.tool).toBe("tiktok_update_adgroup_status");
@@ -154,11 +159,43 @@ describe("hợp đồng AdAction", () => {
         to: "DISABLE",
         reason: "Ngân sách chiến dịch đã cạn",
         requires_confirm: true,
+        confirmed_by: "user_2210",
       }),
     );
     expect(call.tool).toBe("tiktok_update_campaign_status");
     expect(JSON.parse(call.args.campaign_ids as string)).toEqual(["cmp_9001"]);
     expect(call.args.opt_status).toBe("DISABLE");
     expect(call.args.advertiser_id).toBe("tt_88231");
+  });
+
+  it("chặn đổi số ở cấp không phải adgroup ngay trước khi ghi — M3", () => {
+    expect(() =>
+      adActionToolCall({
+        ...parseAdAction(budgetAction),
+        target: { level: "campaign", object_id: "cmp_9001" },
+      }),
+    ).toThrow(/adgroup/);
+  });
+
+  it("chặn khi requires_confirm không phải true — M3", () => {
+    expect(() =>
+      adActionToolCall({ ...parseAdAction(budgetAction), requires_confirm: false }),
+    ).toThrow(/requires_confirm/);
+  });
+
+  it("chặn khi thiếu confirmed_by — ASSERT-4 không chỉ dựa vào rule trong DB", () => {
+    expect(() =>
+      adActionToolCall({ ...parseAdAction(budgetAction), confirmed_by: undefined }),
+    ).toThrow(/confirmed_by/);
+    expect(() => adActionToolCall({ ...parseAdAction(budgetAction), confirmed_by: "  " })).toThrow(
+      /confirmed_by/,
+    );
+  });
+
+  it("nghịch đảo của cú giảm 50% hợp lệ vẫn dựng được — trần không áp cho hoàn tác", () => {
+    const cut = parseAdAction({ ...budgetAction, from: 500000, to: 250000 });
+    const inverse = inverseAdAction(cut);
+    expect(inverse.from).toBe(250000);
+    expect(inverse.to).toBe(500000);
   });
 });

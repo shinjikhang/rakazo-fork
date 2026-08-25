@@ -187,8 +187,8 @@ describe("ruleMatches qua resolveActionApproval — tên tool có tiền tố MC
   });
 
   it("không khớp tool khác cùng server", () => {
-    expect(
-      resolveActionApproval({ toolName: "mcp__any-server-slug__other_tool", rules }),
-    ).toBe("allow");
+    expect(resolveActionApproval({ toolName: "mcp__any-server-slug__other_tool", rules })).toBe(
+      "allow",
+    );
   });
 });

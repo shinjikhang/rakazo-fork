@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { assertBudgetChangeWithinCap } from "./ad-budget-cap.js";
+import { AD_NUMERIC_OPS, AdLevelSchema, AdOpSchema } from "./ad-vocabulary.js";
 
 /**
  * Cấu trúc bốn phần bắt buộc của PRD cho mọi thông điệp chủ động:
@@ -11,20 +13,34 @@ import { z } from "zod";
 const SuggestionSchema = z
   .object({
     text: z.string().min(1),
-    op: z.enum(["pause", "resume", "set_daily_budget", "set_bid"]),
-    level: z.enum(["campaign", "adgroup", "ad"]),
+    op: AdOpSchema,
+    level: AdLevelSchema,
     object_id: z.string().min(1),
     from: z.number().optional(),
     to: z.number().optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.op === "set_daily_budget" || value.op === "set_bid") {
-      if (value.from === undefined) {
-        ctx.addIssue({ code: "custom", message: "gợi ý đổi số phải có from" });
-      }
-      if (value.to === undefined) {
-        ctx.addIssue({ code: "custom", message: "gợi ý đổi số phải có to" });
-      }
+    // Cùng một bộ khoá với ad-action.ts: gợi ý bấm được mà đường ghi từ chối
+    // lúc bấm thì tệ hơn là không gợi ý.
+    if (!AD_NUMERIC_OPS.has(value.op)) return;
+    if (value.level !== "adgroup") {
+      ctx.addIssue({
+        code: "custom",
+        message: `${value.op} chỉ áp dụng ở cấp adgroup, không phải ${value.level}`,
+      });
+      return;
+    }
+    if (value.from === undefined) {
+      ctx.addIssue({ code: "custom", message: "gợi ý đổi số phải có from" });
+    }
+    if (value.to === undefined) {
+      ctx.addIssue({ code: "custom", message: "gợi ý đổi số phải có to" });
+    }
+    if (value.from === undefined || value.to === undefined) return;
+    try {
+      assertBudgetChangeWithinCap(value.from, value.to);
+    } catch (error) {
+      ctx.addIssue({ code: "custom", message: (error as Error).message });
     }
   });
 

@@ -26,12 +26,16 @@ describe("kiểm chứng sau thực thi", () => {
   });
 
   it("giá trị quan sát khớp thì verified", () => {
-    const outcome = verifyApplied(budgetAction, { list: [{ adgroup_id: "adg_3301", budget: 300000 }] });
+    const outcome = verifyApplied(budgetAction, {
+      list: [{ adgroup_id: "adg_3301", budget: 300000 }],
+    });
     expect(outcome.status).toBe("verified");
   });
 
   it("giá trị chưa đổi thì unverified, không phải thất bại", () => {
-    const outcome = verifyApplied(budgetAction, { list: [{ adgroup_id: "adg_3301", budget: 500000 }] });
+    const outcome = verifyApplied(budgetAction, {
+      list: [{ adgroup_id: "adg_3301", budget: 500000 }],
+    });
     expect(outcome.status).toBe("unverified");
     expect(outcome.note).toContain("sẽ kiểm lại ở lần kéo sau");
   });
@@ -60,5 +64,12 @@ describe("kiểm chứng sau thực thi", () => {
     expect(
       verifyApplied(pause, { list: [{ ad_id: "ad_55120", operation_status: "DISABLE" }] }).status,
     ).toBe("verified");
+  });
+
+  it("ngân sách trả về dạng chuỗi số vẫn tính là verified — D", () => {
+    const outcome = verifyApplied(budgetAction, {
+      list: [{ adgroup_id: "adg_3301", budget: "300000" }],
+    });
+    expect(outcome.status).toBe("verified");
   });
 });

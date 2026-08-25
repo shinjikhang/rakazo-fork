@@ -34,7 +34,13 @@ describe("thông điệp báo cáo bốn phần", () => {
     const broken = {
       ...valid,
       suggestions: [
-        { text: "Giảm ngân sách", op: "set_daily_budget", level: "adgroup", object_id: "adg_1", to: 300000 },
+        {
+          text: "Giảm ngân sách",
+          op: "set_daily_budget",
+          level: "adgroup",
+          object_id: "adg_1",
+          to: 300000,
+        },
         ...valid.suggestions.slice(1),
       ],
     };
@@ -51,5 +57,29 @@ describe("thông điệp báo cáo bốn phần", () => {
     expect(out).toContain("CPA cao hơn trung bình 7 ngày 38%");
     expect(out).toContain("Giảm ngân sách ngày nhóm adg_3301");
     expect(out).toContain("cluega_tiktok_ad_manager_report_daily_summary");
+  });
+
+  it("từ chối gợi ý đổi ngân sách ở cấp campaign hoặc ad — cùng khoá với ad-action", () => {
+    for (const level of ["campaign", "ad"]) {
+      const broken = {
+        ...valid,
+        suggestions: [
+          { ...valid.suggestions[0], level, object_id: "obj_1" },
+          ...valid.suggestions.slice(1),
+        ],
+      };
+      expect(() => parseAdReportMessage(broken)).toThrow(/adgroup/);
+    }
+  });
+
+  it("từ chối gợi ý vượt trần 50% — ASSERT-5 cũng áp cho gợi ý bấm được", () => {
+    const broken = {
+      ...valid,
+      suggestions: [
+        { ...valid.suggestions[0], from: 500000, to: 100000 },
+        ...valid.suggestions.slice(1),
+      ],
+    };
+    expect(() => parseAdReportMessage(broken)).toThrow(/vượt trần/);
   });
 });

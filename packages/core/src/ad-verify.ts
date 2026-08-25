@@ -63,7 +63,10 @@ export function verifyApplied(action: AdAction, observed: unknown): VerifyOutcom
         ? "bid_price"
         : "operation_status";
   const current = row[field];
-  if (current === action.to) {
+  // TikTok trả số dưới dạng chuỗi ở một số trường, nên so bằng chuỗi: chiều này
+  // chỉ biến một thay đổi đã có hiệu lực từ unverified thành verified, không bao
+  // giờ ngược lại.
+  if (String(current) === String(action.to)) {
     return { status: "verified", note: `${objectId}: ${field} đã là ${String(action.to)}` };
   }
   return {

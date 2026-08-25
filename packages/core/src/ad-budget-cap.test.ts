@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  BUDGET_DELTA_CAP,
   assertBudgetChangeWithinCap,
+  BUDGET_DELTA_CAP,
   budgetChangeWithinCap,
 } from "./ad-budget-cap.js";
 

@@ -1,16 +1,15 @@
 import { z } from "zod";
 import { assertBudgetChangeWithinCap } from "./ad-budget-cap.js";
-
-const NUMERIC_OPS = new Set(["set_daily_budget", "set_bid"]);
+import { AD_NUMERIC_OPS, AdLevelSchema, AdOpSchema } from "./ad-vocabulary.js";
 
 const AdActionSchema = z
   .object({
     action_id: z.string().min(1),
     account_id: z.string({ error: "account_id là bắt buộc" }).min(1, "account_id là bắt buộc"),
     snapshot_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    op: z.enum(["pause", "resume", "set_daily_budget", "set_bid"]),
+    op: AdOpSchema,
     target: z.object({
-      level: z.enum(["campaign", "adgroup", "ad"]),
+      level: AdLevelSchema,
       object_id: z.string().min(1),
     }),
     // Giá trị cũ là bắt buộc: không có nó thì không hoàn tác được, và cũng
@@ -29,7 +28,7 @@ const AdActionSchema = z
         message: "mọi thao tác tiêu tiền phải có requires_confirm = true",
       });
     }
-    if (NUMERIC_OPS.has(value.op)) {
+    if (AD_NUMERIC_OPS.has(value.op)) {
       if (value.target.level !== "adgroup") {
         ctx.addIssue({
           code: "custom",
@@ -74,12 +73,32 @@ export function inverseAdAction(action: AdAction): AdAction {
   };
 }
 
-/** Ánh xạ sang đúng tool MCP và tham số của nó. */
+/**
+ * Ánh xạ sang đúng tool MCP và tham số của nó.
+ *
+ * `AdAction` là kiểu cấu trúc (z.infer), nên một object literal đúng hình có thể
+ * tới đây mà chưa từng qua parseAdAction. Ba khẳng định dưới là chốt cuối cùng
+ * ngay trước khi ghi.
+ *
+ * Bất đối xứng có chủ ý: trần ±50% KHÔNG kiểm ở đây. Trần đó canh thứ model đề
+ * xuất, nên thuộc về parseAdAction. Nghịch đảo của một cú giảm 50% hợp lệ là một
+ * cú tăng 100%; ép trần ở đây thì không hoàn tác được nữa (trái ASSERT-6), mà
+ * hoàn tác chỉ trả lại giá trị vài phút trước còn đang chạy — an toàn tự thân.
+ */
 export function adActionToolCall(action: AdAction): {
   tool: string;
   args: Record<string, unknown>;
 } {
   const { level, object_id: objectId } = action.target;
+  if (AD_NUMERIC_OPS.has(action.op) && level !== "adgroup") {
+    throw new Error(`${action.op} chỉ áp dụng ở cấp adgroup, không phải ${level}`);
+  }
+  if (!action.requires_confirm) {
+    throw new Error(`${action.action_id}: thiếu requires_confirm = true, không được ghi`);
+  }
+  if (!action.confirmed_by?.trim()) {
+    throw new Error(`${action.action_id}: thiếu confirmed_by, không được ghi`);
+  }
   if (action.op === "set_daily_budget" || action.op === "set_bid") {
     // tiktok_update_adgroup chỉ có adgroup_id/advertiser_id/params ở top level
     // (đã kiểm bằng tools/list) — budget và bid_price đi qua params dạng chuỗi JSON.

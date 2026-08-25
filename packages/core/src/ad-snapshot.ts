@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AdLevelSchema } from "./ad-vocabulary.js";
 
 const nonNegative = z.number().nonnegative();
 
@@ -15,7 +16,7 @@ const AdDailySnapshotSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date phải theo dạng YYYY-MM-DD"),
   currency: z.string().min(1),
   timezone: z.string().min(1),
-  level: z.enum(["campaign", "adgroup", "ad"]),
+  level: AdLevelSchema,
   object_id: z.string().min(1),
   name: z.string(),
   status: z.string().min(1),
