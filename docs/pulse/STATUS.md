@@ -70,6 +70,7 @@ Sửa thêm một file nền dùng chung: `packages/core/src/action-approval.ts`
 |---|---|
 | `probe-mcp.mjs` | Dò một MCP server, thoát ≠0 nếu thiếu tool bắt buộc |
 | `probe-write.mjs` | Chứng minh token có quyền ghi (ghi lại đúng giá trị đang có) |
+| `call-tool.mjs` | Gọi thử một tool — phép duy nhất chứng minh đường dữ liệu thông, vì `tools/list` không cần auth còn `tools/call` thì cần |
 | `assert-allowlist.sql` | Khẳng định allowlist đúng bộ tool, có `-v bot` và `-v expected` |
 
 ---

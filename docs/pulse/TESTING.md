@@ -158,7 +158,31 @@ Danh sách binary có sẵn: `ls data/bin`.
 **Đọc kỹ cột `type`.** Một tham số khai `"string"` mà bạn truyền mảng thì TikTok bỏ qua, trả thành
 công, và không đổi gì. Đó là cách hỏng tệ nhất vì nó im lặng.
 
-### 2.3 Token có quyền ghi không
+### 2.3 Gọi thử một tool — phép thử chứng minh đường dữ liệu thông
+
+**`tools/list` chạy được mà không cần auth, `tools/call` thì không.** Nên `probe-mcp.mjs` báo xanh
+không có nghĩa là lấy được dữ liệu. Luôn gọi thử ít nhất một tool trước khi tin là xong.
+
+```bash
+node scripts/pulse/call-tool.mjs \
+  http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp/mcp \
+  cluega_tiktok_ad_manager_advertiser_list '{"pagesize":10}' \
+  -H "Authorization: Bearer $CLUEGA_TOKEN"
+```
+
+Thoát 0 là gọi được. Thoát 1 kèm `isError: true` là tool từ chối — đọc `message` trong đó.
+
+Hai thông báo đã gặp thật, cả hai đều là **thiếu token**, không phải lỗi cấu hình:
+
+| Server | Thông báo | Cách xử lý |
+|---|---|---|
+| ad-manager | `missing Authorization: forward user Bearer token or set CLUEGA_TIKTOK_AD_MANAGER_ACCESS_TOKEN for local dev only` | truyền header `Authorization: Bearer <token>`, hoặc đặt biến môi trường đó cho dev cục bộ |
+| tiktok-mcp | `tenant context is required (missing or invalid forwarded auth token)` | như trên |
+
+Khi đăng ký MCP server trong Rakazo, đặt header ngay ở đó (`mcp_servers.headers`): tên `Authorization`,
+giá trị `Bearer <token>`. Đó chính là đường mà thông báo lỗi chỉ ra — "forward user Bearer token".
+
+### 2.4 Token có quyền ghi không
 
 ```bash
 export ADGROUP_ID=...  ADVERTISER_ID=...      # ad group thử nghiệm, ngân sách nhỏ
