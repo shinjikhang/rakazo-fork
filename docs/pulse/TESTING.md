@@ -239,6 +239,41 @@ thông báo này; hãy xem log của `cdp_backend` để biết endpoint nào 40
 kèm handler `facebook_mcp_compat`. Lớp tương thích MCP đã làm cho Facebook nhưng chưa làm cho TikTok.
 Đây là việc của `cdp_backend` (Kin-CG05), không phải của Rakazo.
 
+**Cái gì CHẠY ĐƯỢC hôm nay — đã kiểm thật 25/08.** Chỉ khâu tự dò advertiser hỏng; mọi thứ khác thông,
+kể cả gọi tới API TikTok và lấy về số liệu chi tiêu thật. Đi vòng bằng cách đưa thẳng `advertiser_id`:
+
+```bash
+TEN=<tenant uuid>            # lấy từ CDP_TENANT_ID trong mcp_gateway/.env
+U=http://127.0.0.1:5235/gateway/tiktok-mcp/mcp
+
+# 1. Business center — chỉ cần token, KHÔNG qua metadata
+node scripts/pulse/call-tool.mjs "$U" tiktok_get_business_centers '{}' -H "x-tenant-id: $TEN"
+
+# 2. Advertiser dưới BC. Chú ý asset_type nằm trong params dạng chuỗi JSON,
+#    đúng quy ước mà các tool ghi cũng dùng
+node scripts/pulse/call-tool.mjs "$U" tiktok_get_business_center_assets \
+  '{"bc_id":"<bc_id>","page_size":10,"params":"{\"asset_type\":\"ADVERTISER\"}"}' \
+  -H "x-tenant-id: $TEN"
+
+# 3. Chiến dịch
+node scripts/pulse/call-tool.mjs "$U" tiktok_get_campaigns \
+  '{"advertiser_id":"<adv_id>","page_size":5}' -H "x-tenant-id: $TEN"
+
+# 4. Báo cáo hiệu suất — đúng thứ yêu cầu 1 của PM cần
+node scripts/pulse/call-tool.mjs "$U" tiktok_get_reports \
+  '{"advertiser_id":"<adv_id>","dimensions":"[\"campaign_id\"]",
+    "metrics":"[\"spend\",\"impressions\",\"clicks\",\"ctr\",\"cpc\",\"conversion\"]",
+    "start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","page_size":5}' \
+  -H "x-tenant-id: $TEN"
+```
+
+Cả bốn đều trả `success: true` với dữ liệu thật. `dimensions`, `metrics`, `filters` đều là **chuỗi
+JSON**, không phải mảng — cùng cái bẫy `type: "string"` đã gặp ở tool ghi.
+
+**Hệ quả cho mức 1:** bot đọc được báo cáo TikTok ngay hôm nay, miễn là `advertiser_id` được đưa vào
+tường minh — đặt trong system prompt của bot, hoặc để khách nói ra. Chỉ mất khả năng bot tự liệt kê
+advertiser cho tới khi cdp có endpoint `metadata`.
+
 **Cách chẩn đoán nhanh** — chạy lệnh gọi tool rồi soi log cdp trong cùng khoảng thời gian:
 
 ```bash

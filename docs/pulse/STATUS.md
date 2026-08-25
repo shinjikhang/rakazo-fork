@@ -44,6 +44,20 @@ Vòng lặp bạn test hôm nay chạy trên đường native của Rakazo, khô
 Hai guard quan trọng nhất cho tiền — **allowlist** và **người duyệt** — đã sống. Bộ hạn chế thiệt hại
 và bản ghi để hoàn tác thì chưa. **Test trên ad group ngân sách nhỏ, đừng test trên chiến dịch chính.**
 
+### Cập nhật 25/08 tối — đường đọc TikTok đã thông
+
+Đã chạy thật qua `mcp_gateway`: business center → advertiser → campaigns → **báo cáo hiệu suất có số
+liệu chi tiêu thật**. Chuỗi `Rakazo → gateway → tiktok-ads-mcp → cdp_backend (token) → API TikTok`
+hoạt động trọn vẹn.
+
+Hai điều đã sửa để tới được đây: đặt `CDP_INTERNAL_API_KEY` (cdp_backend) và `CDP_SERVICE_TOKEN`
+(mcp_gateway) **bằng nhau**, và biết rằng gateway chỉ cần header `x-tenant-id`, không cần JWT.
+
+Còn một khiếm khuyết, **không chặn**: `cdp_backend` thiếu route
+`/internal/v1/integrations/tiktok/tenants/:id/connections/active/metadata` (Facebook đã có, TikTok
+chưa), nên bot không tự liệt kê được advertiser. Đi vòng bằng cách đưa `advertiser_id` tường minh vào
+system prompt. Chi tiết và công thức ở `TESTING.md §2.3b`.
+
 ---
 
 ## 2. Đã xây gì
