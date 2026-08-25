@@ -31,13 +31,13 @@ Rồi ở repo rakazo:
 cd "$REPO"
 export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
 
-node scripts/pulse/probe-mcp.mjs http://127.0.0.1:8080/gateway/tiktok-ads-mcp \
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
   tiktok_get_authorized_ad_accounts tiktok_get_campaigns tiktok_get_ad_groups \
   tiktok_get_ads tiktok_get_ad_account_balance tiktok_recommend_bid \
   tiktok_update_ad_status tiktok_update_adgroup \
   tiktok_update_adgroup_status tiktok_update_campaign_status
 
-node scripts/pulse/probe-mcp.mjs http://127.0.0.1:8080/gateway/cluega-tiktok-ad-manager-mcp \
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp \
   cluega_tiktok_ad_manager_report_daily_summary \
   cluega_tiktok_ad_manager_report_daily_trend \
   cluega_tiktok_ad_manager_report_period_compare \
@@ -49,14 +49,17 @@ node scripts/pulse/probe-mcp.mjs http://127.0.0.1:8080/gateway/cluega-tiktok-ad-
 ```
 
 Đạt: cả hai in `đủ N tool bắt buộc`, thoát mã 0.
-Cổng `8080` lấy theo `configs/mcp-gateway.yaml`; sửa lại nếu khác.
+Cổng mặc định là `5235` (`configs/mcp-gateway.yaml`: `port: ${MCP_GATEWAY_PORT:5235}`); đổi bằng biến
+`MCP_GATEWAY_PORT` nếu cần. Prefix lấy theo từng config: `tiktok-mcp-stdio.yaml` dùng
+`/gateway/tiktok-mcp` (KHÔNG phải `/gateway/tiktok-ads-mcp`), `cluega-tiktok-ad-manager-mcp.yaml` dùng
+`/gateway/cluega-tiktok-ad-manager-mcp`.
 
 ## H2 · Chứng minh token có quyền ghi (Task 1, bước 5) — **cổng chặn cả plan**
 
 ```bash
 export ADGROUP_ID=...      # ad group thử nghiệm
 export ADVERTISER_ID=...
-node scripts/pulse/probe-write.mjs http://127.0.0.1:8080/gateway/tiktok-ads-mcp \
+node scripts/pulse/probe-write.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
   "$ADGROUP_ID" "$ADVERTISER_ID"
 ```
 
