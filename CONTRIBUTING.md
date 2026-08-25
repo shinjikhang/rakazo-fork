@@ -1,6 +1,6 @@
-# Contributing to Rakazo
+# Contributing to Cluega Bot
 
-Thanks for helping improve Rakazo. Keep changes focused and testable.
+Thanks for helping improve Cluega Bot. Keep changes focused and testable.
 
 ## Run locally
 
@@ -56,6 +56,6 @@ capability config, fixtures, logs, or snapshots; use the encrypted secret store 
 
 | Address | Use for |
 | --- | --- |
-| [security@rakazo.com](mailto:security@rakazo.com) | Vulnerabilities only — see [SECURITY.md](SECURITY.md) |
-| [support@rakazo.com](mailto:support@rakazo.com) | User and support questions |
-| [elie@rakazo.com](mailto:elie@rakazo.com) | Maintainer |
+| [security@cluega.com](mailto:security@cluega.com) | Vulnerabilities only — see [SECURITY.md](SECURITY.md) |
+| [support@cluega.com](mailto:support@cluega.com) | User and support questions |
+| [support@cluega.com](mailto:support@cluega.com) | Maintainer |

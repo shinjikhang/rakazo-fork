@@ -24,7 +24,7 @@ describe("formatThreadTime", () => {
 describe("filterBots", () => {
   const bots = [
     bot("seo", "SEO Bot", "Improves SEO", "tracking-pixel page"),
-    bot("inbox", "Inbox Triage", "Inbox Zero", "draft replies"),
+    bot("inbox", "Inbox Triage", "Zero backlog", "draft replies"),
   ];
 
   it("returns the full list when the query is empty", () => {

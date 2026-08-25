@@ -347,7 +347,7 @@ function loadAppUrl(win: BrowserWindow, url: string): Promise<void> {
  * not a usable app. After session resolves, wait for a bootstrapped shell
  * (`data-ready` / shell-ready mark) or an auth/welcome/onboarding surface so a
  * bare Suspense fallback or pre-bootstrap ShellPage cannot pass. Plain e2e
- * fixtures omit the Rakazo app-state marker.
+ * fixtures omit the Cluega Bot app-state marker.
  */
 async function waitForMountedAppDocument(contents: Electron.WebContents) {
   const deadline = Date.now() + 8_000;
@@ -381,7 +381,7 @@ async function waitForMountedAppDocument(contents: Electron.WebContents) {
         performance.getEntriesByName("rk:renderer:session-committed").length > 0;
       if (sessionReady && surfaceReady) return true;
 
-      // Desktop e2e fixtures mount a plain page without Rakazo app-state markers.
+      // Desktop e2e fixtures mount a plain page without Cluega Bot app-state markers.
       if (appState === null) {
         const bodyText = (document.body?.innerText || "").trim();
         if (bodyText.includes("Opening your workspace")) return false;
@@ -517,7 +517,7 @@ function restoreAppWindowAfterSetup() {
 function installApplicationMenu() {
   const changeServer: Electron.MenuItemConstructorOptions = {
     id: "change-rakazo-server",
-    label: "Change Rakazo Server…",
+    label: "Change Cluega Bot Server…",
     accelerator: "CmdOrCtrl+Shift+K",
     click: () => showSetupWindow(),
   };
@@ -552,7 +552,7 @@ function installApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-/** Setup IPC must only answer the setup window, never a connected Rakazo server. */
+/** Setup IPC must only answer the setup window, never a connected Cluega Bot server. */
 function fromSetupWindow(event: Electron.IpcMainInvokeEvent) {
   return (
     setupWindow !== null && !setupWindow.isDestroyed() && event.sender === setupWindow.webContents
@@ -578,7 +578,7 @@ async function probeServer(rawUrl: string): Promise<DesktopReachability> {
         ok: false,
         status: response.status,
         url,
-        error: "That address redirects elsewhere. Enter the final Rakazo server address.",
+        error: "That address redirects elsewhere. Enter the final Cluega Bot server address.",
       };
     }
     if (!response.ok) {
@@ -595,7 +595,7 @@ async function probeServer(rawUrl: string): Promise<DesktopReachability> {
         ok: false,
         status: response.status,
         url,
-        error: "That address did not respond like a Rakazo server.",
+        error: "That address did not respond like a Cluega Bot server.",
       };
     }
     return {

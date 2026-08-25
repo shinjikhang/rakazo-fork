@@ -19,7 +19,7 @@ import {
 
 const stars = await fetchGithubStars();
 const starsLabel = stars === null ? "Star" : formatStarCount(stars);
-const setupAgentPrompt = `Set up Rakazo for me. Follow the setup prompt at ${SETUP_PROMPT_URL}`;
+const setupAgentPrompt = `Set up Cluega Bot for me. Follow the setup prompt at ${SETUP_PROMPT_URL}`;
 const structuredData = {
   "@context": "https://schema.org",
   "@graph": [
@@ -53,7 +53,7 @@ const structuredData = {
 };
 ---
 
-<BaseLayout title="Rakazo" description={SITE_DESCRIPTION} {structuredData}>
+<BaseLayout title="Cluega Bot" description={SITE_DESCRIPTION} {structuredData}>
   <div class="container">
     <Header starsLabel={starsLabel} />
 
@@ -138,7 +138,7 @@ const structuredData = {
           <div class="eyebrow">Open source</div>
           <h2 class="section-heading">No pricing page. Just the repo.</h2>
           <p class="section-copy">
-            Rakazo is Apache-2.0 licensed and runs on your own machine with your own model keys. Nothing is
+            Cluega Bot is Apache-2.0 licensed and runs on your own machine with your own model keys. Nothing is
             gated, nothing phones home.
           </p>
         </div>
@@ -181,7 +181,7 @@ const structuredData = {
       <section class="stats-band">
         <div>
           <h2>Meet your first bot</h2>
-          <p>Give Rakazo something you have been putting off and let it handle the follow-through.</p>
+          <p>Give Cluega Bot something you have been putting off and let it handle the follow-through.</p>
           <div class="cta-actions">
             <button class="button button--primary" type="button" data-get-started-open>Get started</button>
             <Button href={GITHUB_URL} variant="secondary" external>View on GitHub</Button>

@@ -173,3 +173,22 @@ describe("resolveActionApproval", () => {
     ).toBe("allow");
   });
 });
+
+describe("ruleMatches qua resolveActionApproval — tên tool có tiền tố MCP", () => {
+  const rules: ActionApprovalRule[] = [
+    { effect: "require_approval", matchKind: "tool", matchValue: "some_write_tool" },
+  ];
+
+  it("khớp cả tên trần và tên có tiền tố mcp__<slug>__", () => {
+    expect(resolveActionApproval({ toolName: "some_write_tool", rules })).toBe("ask");
+    expect(
+      resolveActionApproval({ toolName: "mcp__any-server-slug__some_write_tool", rules }),
+    ).toBe("ask");
+  });
+
+  it("không khớp tool khác cùng server", () => {
+    expect(resolveActionApproval({ toolName: "mcp__any-server-slug__other_tool", rules })).toBe(
+      "allow",
+    );
+  });
+});
