@@ -78,11 +78,13 @@ Sửa thêm một file nền dùng chung: `packages/core/src/action-approval.ts`
 
 | MCP server | Prefix HTTP | Số tool | Dùng cho |
 |---|---|---|---|
-| `cluega-tiktok-ad-manager-mcp` | `/gateway/cluega-tiktok-ad-manager-mcp` | 12, chỉ đọc | phân tích hằng ngày (đọc DB Cluega, rẻ, không đụng rate limit TikTok) |
-| `tiktok-ads-mcp` | `/gateway/tiktok-mcp` | **246**, có đủ phần ghi | thực thi và kiểm chứng (gọi thẳng API TikTok) |
+| `cluega-tiktok-ad-manager-mcp` | `/gateway/cluega-tiktok-ad-manager-mcp/mcp` | 15 qua gateway (12 từ binary), chỉ đọc | phân tích hằng ngày (đọc DB Cluega, rẻ, không đụng rate limit TikTok) |
+| `tiktok-ads-mcp` | `/gateway/tiktok-mcp/mcp` | **249** qua gateway (246 từ binary), có đủ phần ghi | thực thi và kiểm chứng (gọi thẳng API TikTok) |
 
 Cổng gateway mặc định **5235** (`configs/mcp-gateway.yaml`: `port: ${MCP_GATEWAY_PORT:5235}`).
-Lưu ý prefix của `tiktok-ads-mcp` là `/gateway/tiktok-mcp`, **không** trùng tên server.
+Hai điều dễ sai ở URL, cả hai đã kiểm thật:
+- prefix của `tiktok-ads-mcp` là `/gateway/tiktok-mcp`, **không** trùng tên server;
+- phải có hậu tố **`/mcp`** ở cuối, thiếu là 404 `Invalid prefix`.
 
 Bot chỉ thấy 18 trong 246 tool: 8 đọc từ ad-manager, 6 đọc/kiểm chứng + 4 ghi từ tiktok-ads-mcp.
 Danh sách đầy đủ ở `handover-checklist.md` H3 và H4.

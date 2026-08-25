@@ -95,13 +95,13 @@ corepack pnpm format     # sửa tự động
 ### 2.1 Tool có tới được không
 
 ```bash
-node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/tiktok-mcp/mcp \
   tiktok_get_authorized_ad_accounts tiktok_get_campaigns tiktok_get_ad_groups \
   tiktok_get_ads tiktok_get_ad_account_balance tiktok_recommend_bid \
   tiktok_update_ad_status tiktok_update_adgroup \
   tiktok_update_adgroup_status tiktok_update_campaign_status
 
-node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp \
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp/mcp \
   cluega_tiktok_ad_manager_report_daily_summary \
   cluega_tiktok_ad_manager_report_daily_trend \
   cluega_tiktok_ad_manager_report_period_compare \
@@ -112,8 +112,13 @@ node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega-tiktok-ad-
   cluega_tiktok_ad_manager_ad_list
 ```
 
-Đạt: in `đủ N tool bắt buộc`, thoát mã 0. Cổng mặc định **5235**, prefix của `tiktok-ads-mcp` là
-`/gateway/tiktok-mcp`.
+Đạt: in `đủ N tool bắt buộc`, thoát mã 0. Số đo thật ngày 25/08: ad-manager **15 tool**,
+tiktok-mcp **249 tool**.
+
+**URL phải có hậu tố `/mcp`.** Gateway lấy segment cuối làm endpoint
+(`internal/core/server_routes.go:145-153`, hợp lệ: `sse` · `message` · `mcp`), phần trước là prefix.
+Thiếu `/mcp` thì trả `404 {"error":{"message":"Invalid prefix"}}`, và `probe-mcp.mjs` sẽ in
+`tổng: 0` thay vì báo lỗi rõ — thấy `tổng: 0` thì nghĩ ngay tới URL.
 
 Gọi không kèm tên tool thì nó in toàn bộ danh sách — hữu ích khi muốn xem server phơi những gì.
 
@@ -157,7 +162,7 @@ công, và không đổi gì. Đó là cách hỏng tệ nhất vì nó im lặn
 
 ```bash
 export ADGROUP_ID=...  ADVERTISER_ID=...      # ad group thử nghiệm, ngân sách nhỏ
-node scripts/pulse/probe-write.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
+node scripts/pulse/probe-write.mjs http://127.0.0.1:5235/gateway/tiktok-mcp/mcp \
   "$ADGROUP_ID" "$ADVERTISER_ID"
 ```
 
