@@ -1,15 +1,14 @@
-# Rakazo
+# Cluega Bot
 
-[![GitHub stars](https://img.shields.io/github/stars/elie222/rakazo?labelColor=black&style=for-the-badge&color=2563EB)](https://github.com/elie222/rakazo/stargazers)
-[![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?labelColor=black&style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/RWwKa2Sn7h)
+[![GitHub stars](https://img.shields.io/github/stars/shinjikhang/rakazo?labelColor=black&style=for-the-badge&color=2563EB)](https://github.com/shinjikhang/rakazo/stargazers)
 
-![Rakazo — AI teammates you actually own](./docs/readme-hero.png)
+![Cluega Bot — AI teammates you actually own](./docs/readme-hero.png)
 
-Rakazo is an open-source platform for running persistent AI teammates. It is available on the web,
+Cluega Bot is an open-source platform for running persistent AI teammates. It is available on the web,
 as an Electron desktop app, and through an Expo mobile app. Bring your own model and computer
 provider, or run the complete stack locally.
 
-Rakazo is in beta. Learn more at [rakazo.com](https://rakazo.com).
+Cluega Bot is in beta. Learn more at [cluega.com](https://cluega.com).
 
 ## Features
 
@@ -44,7 +43,7 @@ https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
 You need Node.js 22+, pnpm 9, and Docker Desktop.
 
 ```bash
-git clone https://github.com/elie222/rakazo.git
+git clone https://github.com/shinjikhang/rakazo.git
 cd rakazo
 cp .env.example .env
 ```
@@ -79,7 +78,7 @@ provider selection, backups, and upgrades, see the [self-hosting guide](./docs/s
 
 ## Desktop and mobile
 
-The Electron and Expo apps are clients of the same Rakazo API used by the web app.
+The Electron and Expo apps are clients of the same Cluega Bot API used by the web app.
 
 With the development stack running, launch Electron with:
 
@@ -87,12 +86,12 @@ With the development stack running, launch Electron with:
 pnpm --filter @rakazo/desktop dev
 ```
 
-On first run the desktop app asks whether to use the Rakazo stack on this computer
+On first run the desktop app asks whether to use the Cluega Bot stack on this computer
 (`http://127.0.0.1:5173`) or connect to an existing server. Public servers must use HTTPS; HTTP is
-accepted only for loopback and private LAN addresses (not link-local). The app verifies Rakazo's
+accepted only for loopback and private LAN addresses (not link-local). The app verifies Cluega Bot's
 health endpoint before saving, and later launches go straight to that instance.
 
-Use **Change Rakazo Server…** in the application menu to reconnect. Closing that window without
+Use **Change Cluega Bot Server…** in the application menu to reconnect. Closing that window without
 saving returns to the previous instance. For development automation, set `RAKAZO_WEB_URL` to point
 the shell somewhere else without changing the saved instance, or `RAKAZO_FORCE_SETUP=1` to run
 setup again.
@@ -101,7 +100,7 @@ Mobile build and release instructions live in [docs/mobile-release.md](./docs/mo
 
 ## Development
 
-Rakazo is a TypeScript monorepo built with React, Electron, Expo, Hono, Postgres, Prisma, Graphile
+Cluega Bot is a TypeScript monorepo built with React, Electron, Expo, Hono, Postgres, Prisma, Graphile
 Worker, and Pi.
 
 ```text
@@ -152,6 +151,5 @@ Contributions are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) befo
 request. For security vulnerabilities, follow [SECURITY.md](./SECURITY.md) instead of filing a public
 issue.
 
-Rakazo is licensed under the [Apache License 2.0](./LICENSE).
+Cluega Bot is licensed under the [Apache License 2.0](./LICENSE).
 
-Questions and ideas are welcome in the [Rakazo Discord community](https://discord.gg/RWwKa2Sn7h).

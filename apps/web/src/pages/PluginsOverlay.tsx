@@ -346,8 +346,8 @@ export function PluginsOverlay({
                     />
                   ) : null}
                   <p className="text-xs leading-5 text-[#707077]">
-                    Rakazo verifies the source before saving it. Credentials are encrypted and are
-                    never returned to clients or exposed to the model.
+                    Cluega Bot verifies the source before saving it. Credentials are encrypted and
+                    are never returned to clients or exposed to the model.
                   </p>
                   <div className="flex gap-2">
                     <Button

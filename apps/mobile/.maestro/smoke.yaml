@@ -1,10 +1,10 @@
 appId: com.rakazo.app
-name: Rakazo mobile smoke
+name: Cluega Bot mobile smoke
 ---
 - launchApp:
     clearState: true
 
-- assertVisible: "Sign in to Rakazo"
+- assertVisible: "Sign in to Cluega Bot"
 - tapOn: "Email"
 - inputText: ${RAKAZO_E2E_EMAIL}
 - tapOn: "Password"

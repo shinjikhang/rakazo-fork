@@ -25,7 +25,7 @@
   },
   "build": {
     "appId": "dev.rakazo.desktop",
-    "productName": "Rakazo",
+    "productName": "Cluega Bot",
     "directories": {
       "output": "out",
       "buildResources": "assets"

@@ -110,7 +110,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: production
-      url: https://app.rakazo.com
+      url: https://app.cluega.com
     steps:
       - name: Configure production SSH identity
         env:

@@ -271,7 +271,7 @@ export function inferScript(
         toolCalls: [
           {
             name: "destination.write",
-            args: { collection: "notes", title: "Rakazo result", body: prompt },
+            args: { collection: "notes", title: "Cluega Bot result", body: prompt },
           },
         ],
         complete: true,
