@@ -31,6 +31,29 @@ describe("cổng phê duyệt cho tool ghi TikTok", () => {
     ).toBe("allow");
   });
 
+  it("tên tool có tiền tố mcp__<slug>__ vẫn khớp rule — M1", () => {
+    const rules = tiktokApprovalRules();
+    for (const toolName of TIKTOK_WRITE_TOOLS) {
+      expect(
+        resolveActionApproval({
+          toolName: `mcp__tiktok-ads-mcp__${toolName}`,
+          connectorKind: "tiktok",
+          rules,
+        }),
+      ).toBe("ask");
+    }
+  });
+
+  it("tool đọc có tiền tố vẫn chạy thẳng", () => {
+    expect(
+      resolveActionApproval({
+        toolName: "mcp__tiktok-ads-mcp__tiktok_get_ad_groups",
+        connectorKind: "tiktok",
+        rules: tiktokApprovalRules(),
+      }),
+    ).toBe("allow");
+  });
+
   it("danh sách tool ghi đúng bốn cái, không dư", () => {
     expect([...TIKTOK_WRITE_TOOLS].sort()).toEqual([
       "tiktok_update_ad_status",

@@ -71,11 +71,28 @@ function categoryMatches(category: string, toolName: string, connectorKind: stri
   return false;
 }
 
+/**
+ * Tool MCP đến với model dưới tên `mcp__<slug>__<tool>` (mcp-connector.ts), còn
+ * rule do người vận hành đặt theo tên trần — slug là thứ họ tự chọn khi đăng ký
+ * server, nhúng nó vào rule thì đổi tên server là mất rule.
+ *
+ * Chiều của thay đổi này chỉ có thể làm phát sinh THÊM lần hỏi phê duyệt, không
+ * bao giờ ít hơn — đúng chiều an toàn cho một cái cổng.
+ */
+function bareToolName(toolName: string): string {
+  if (!toolName.startsWith("mcp__")) return toolName;
+  const rest = toolName.slice("mcp__".length);
+  const separator = rest.indexOf("__");
+  return separator === -1 ? toolName : rest.slice(separator + 2);
+}
+
 function ruleMatches(rule: ActionApprovalRule, toolName: string, connectorKind: string): boolean {
   const value = rule.matchValue.toLowerCase();
   switch (rule.matchKind) {
-    case "tool":
-      return toolName.toLowerCase() === value;
+    case "tool": {
+      const normalized = toolName.toLowerCase();
+      return normalized === value || bareToolName(normalized) === value;
+    }
     case "connector":
       return connectorKind.toLowerCase() === value;
     case "category":

@@ -4,7 +4,7 @@ import type { ActionApprovalRule } from "./action-approval.js";
  * Bốn tool duy nhất được phép đổi thứ tiêu tiền trên TikTok ở đợt này.
  *
  * Cổng phê duyệt của executor mặc định cho qua khi không rule nào khớp
- * (action-approval.ts:107), nên danh sách này tồn tại để dựng rule tường minh
+ * (action-approval.ts:128), nên danh sách này tồn tại để dựng rule tường minh
  * chứ không dựa vào suy đoán theo tên tool.
  */
 export const TIKTOK_WRITE_TOOLS = [
