@@ -196,6 +196,62 @@ bộ DB đó chỉ có `tiktok_advertiser_bindings` (rỗng), không có bảng 
 tắt. Muốn có dữ liệu thì hoặc nối tài khoản quảng cáo qua UI Integrations của CDP, hoặc bật service IM,
 hoặc trỏ sang staging.
 
+### 2.3b Chuỗi xác thực service-to-service — đã truy hết ngày 25/08
+
+Ghi lại toàn bộ để lần sau không phải truy lại. Chuỗi thật:
+
+```
+Rakazo bot
+  → mcp_gateway :5235          header x-tenant-id  (KHÔNG cần JWT)
+  → tiktok-ads-mcp
+  → cdp_backend :8080          header X-Internal-Key = CDP_INTERNAL_API_KEY
+       GET /internal/v1/integrations/tiktok/tenants/{tenant}/connections/active/token     → 200 ✅
+       GET /internal/v1/integrations/tiktok/tenants/{tenant}/connections/active/metadata  → 404 ❌
+  → giải mã token trong tenant_<id>.tiktok_connections
+```
+
+**Khoá dùng chung.** `cdp_backend` bảo vệ `/internal/v1/*` bằng một shared secret
+(`config.go:1565`: *"Env: `CDP_INTERNAL_API_KEY`"*), nhận qua header `X-Internal-Key` hoặc
+`Authorization: Bearer`. `mcp_gateway` gửi nó dưới tên `CDP_SERVICE_TOKEN`. **Hai biến phải cùng giá
+trị**, và cả hai service đọc `.env` lúc khởi động (`godotenv`), nên đổi khoá là phải restart cả hai.
+
+Middleware từ chối khi khoá rỗng (`service_auth.go:46`), và log lúc boot cho biết đã nạp chưa:
+
+```
+service auth: internal key internal_key_configured=true
+```
+
+**Lỗi đang chặn (chưa sửa được từ phía Rakazo).** `tiktok-ads-mcp` gọi tiếp endpoint `metadata` để lấy
+danh sách advertiser. Endpoint đó **không tồn tại trong `cdp_backend`** — router chỉ đăng ký các route
+`/token` và `/mark-expired` cho TikTok. Mà `internal/cdp/client.go:452` của MCP lại dịch 404 thành:
+
+```go
+// 404/410 means no active TikTok connection exists for this tenant.
+case se.Code == http.StatusNotFound || se.Code == http.StatusGone:
+    return nil, fmt.Errorf("%w", domain.ErrNoActiveConnection)
+```
+
+Nên thông báo hiện ra là `no active TikTok connection for this tenant` — **sai hoàn toàn**: connection
+vẫn tốt (4 hàng `active`, token hạn 2027, endpoint `/token` trả 200). Đừng đi tìm connection khi thấy
+thông báo này; hãy xem log của `cdp_backend` để biết endpoint nào 404.
+
+Đáng chú ý: **Facebook đã có** `/internal/v1/integrations/facebook/.../connections/active/metadata`
+kèm handler `facebook_mcp_compat`. Lớp tương thích MCP đã làm cho Facebook nhưng chưa làm cho TikTok.
+Đây là việc của `cdp_backend` (Kin-CG05), không phải của Rakazo.
+
+**Cách chẩn đoán nhanh** — chạy lệnh gọi tool rồi soi log cdp trong cùng khoảng thời gian:
+
+```bash
+L=<file log của cdp_backend>
+BEFORE=$(wc -l < "$L")
+node scripts/pulse/call-tool.mjs http://127.0.0.1:5235/gateway/tiktok-mcp/mcp \
+  tiktok_get_authorized_ad_accounts '{"page_size":5}' -H "x-tenant-id: $TEN" >/dev/null 2>&1
+sleep 2
+tail -n +$((BEFORE+1)) "$L" | grep -iE "internal|tiktok|401|404"
+```
+
+Không có dòng nào nghĩa là MCP chưa hề gọi tới cdp. Có 401 là sai khoá. Có 404 là thiếu route.
+
 ### 2.4 Token có quyền ghi không
 
 ```bash
