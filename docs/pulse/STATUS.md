@@ -9,6 +9,7 @@ Tách từ: `dev @ d6b99c5` · HEAD: `f20088b`
 |---|---|
 | `handover-checklist.md` | Khi chạy test — H1→H6, có hai cổng chặn |
 | `tiktok-bot-prompt.md` | Dán vào system prompt của bot TikTok Ads |
+| `TESTING.md` | Sổ tay test dùng lại — công thức theo thứ cần kiểm |
 | `acceptance-log.md` | Khi nghiệm thu, người thao tác điền vào |
 
 Thiết kế và kế hoạch gốc: `docs/superpowers/specs/2026-08-25-pulse-agent-loop-design.md` và

@@ -1510,6 +1510,9 @@ Yêu cầu bot giảm ngân sách xuống còn 10% giá trị hiện tại. Kỳ
 
 - [ ] **Step 5: Đo ngưỡng độ trễ — ASSERT-8**
 
+> **Đã lỗi thời.** `external_effects` không có cột `approvedAt`/`completedAt`; truy vấn đúng nằm ở
+> `docs/pulse/TESTING.md` §6. Giữ lại phần dưới làm bản ghi lịch sử.
+
 Hai ngưỡng: kéo dữ liệu một tài khoản P95 dưới 3 phút, và từ lúc bấm nút tới lúc TikTok đổi P95 dưới
 60 giây. Chạy 20 lượt để P95 có nghĩa.
 

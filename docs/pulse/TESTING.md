@@ -1,0 +1,374 @@
+# Sổ tay test — vòng lặp quảng cáo TikTok
+
+Dùng lại mỗi lần. Mọi truy vấn và lệnh trong file này đã chạy thật trên máy phát triển, tên cột đã đối
+chiếu với schema, không phỏng đoán.
+
+Khác nhau giữa ba tài liệu:
+
+| File | Dùng khi |
+|---|---|
+| `handover-checklist.md` | **Một lần**, khi triển khai lần đầu — trình tự H1→H6 có cổng chặn |
+| `TESTING.md` (file này) | **Nhiều lần**, tra công thức test theo thứ cần kiểm |
+| `acceptance-log.md` | Khi nghiệm thu chính thức, người ngoài đội phát triển điền |
+
+Mọi lệnh giả định:
+
+```bash
+cd /Users/khanghuynh/Documents/Dev/cluega/rakazo
+export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
+```
+
+---
+
+## 0. Vừa đổi gì thì chạy gì
+
+| Vừa đổi | Chạy |
+|---|---|
+| Một module trong `packages/core` | §1.1 test khu trú → §1.3 check → §1.4 lint |
+| Tham số tool MCP, hoặc nghi hỏng im lặng | §2.2 dò `inputSchema` — công thức này đã bắt được 4 lỗi |
+| Allowlist tool của bot | §3.1 |
+| Rule phê duyệt | §3.2 rồi §5.1 |
+| Prompt hoặc routine | §4.2 |
+| Bất cứ thứ gì trên đường tiêu tiền | §5 trọn bộ, trên ad group ngân sách nhỏ |
+| Trước khi merge | §1.2 toàn repo + §6 |
+
+---
+
+## 1. Test tự động
+
+### 1.1 Khu trú — vòng lặp thường ngày
+
+```bash
+corepack pnpm vitest run packages/core/src/ad-action.test.ts        # hợp đồng AdAction
+corepack pnpm vitest run packages/core/src/ad-approval.test.ts      # cổng phê duyệt
+corepack pnpm vitest run packages/core/src/ad-budget-cap.test.ts    # trần ±50%
+corepack pnpm vitest run packages/core/src/ad-snapshot.test.ts      # tầng chỉ số
+corepack pnpm vitest run packages/core/src/ad-report-message.test.ts # thông điệp 4 phần
+corepack pnpm vitest run packages/core/src/ad-verify.test.ts        # vòng lặp B
+corepack pnpm vitest run packages/core/src/action-approval.test.ts  # file nền dùng chung
+```
+
+Cả gói: `corepack pnpm vitest run packages/core` — kỳ vọng **288 test xanh, 27 file**.
+
+### 1.2 Toàn repo — trước khi merge
+
+```bash
+corepack pnpm test
+```
+
+**Kỳ vọng 2 đỏ, và hai cái đó là bình thường** — có sẵn từ trước, không do vòng lặp quảng cáo:
+
+| Test | Vì sao đỏ |
+|---|---|
+| `packages/adapters/src/desktop-sandbox-write-containment.test.ts` | Lỗi có sẵn trên macOS: `assertContainedFileHandle` verify lại qua đường dẫn nên symlink bị resolve ra ngoài; nhánh `/proc/self/fd` chỉ có trên Linux |
+| `packages/adapters/src/voice-http.test.ts` | Flaky, deadline 1ms; chạy riêng thì xanh |
+
+Cách chứng minh một lỗi đỏ là có sẵn chứ không phải do mình (dùng lại được cho mọi lỗi khác):
+
+```bash
+W=/tmp/base-check
+git worktree add -q --detach "$W" <commit-gốc>
+for p in "" packages packages/adapters packages/core packages/contracts packages/db packages/adapter-kit; do
+  ln -s "$PWD/$p/node_modules" "$W/$p/node_modules" 2>/dev/null
+done
+(cd "$W" && corepack pnpm vitest run <đường/dẫn/test.ts>)
+git worktree remove --force "$W" && git worktree prune
+```
+
+### 1.3 Kiểm kiểu
+
+```bash
+corepack pnpm check      # tsc --noEmit từng package — kỳ vọng 20/20
+```
+
+### 1.4 Lint
+
+```bash
+corepack pnpm lint       # biome — kỳ vọng "Checked 543 files. No fixes applied."
+corepack pnpm format     # sửa tự động
+```
+
+---
+
+## 2. Test kết nối MCP
+
+### 2.1 Tool có tới được không
+
+```bash
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
+  tiktok_get_authorized_ad_accounts tiktok_get_campaigns tiktok_get_ad_groups \
+  tiktok_get_ads tiktok_get_ad_account_balance tiktok_recommend_bid \
+  tiktok_update_ad_status tiktok_update_adgroup \
+  tiktok_update_adgroup_status tiktok_update_campaign_status
+
+node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp \
+  cluega_tiktok_ad_manager_report_daily_summary \
+  cluega_tiktok_ad_manager_report_daily_trend \
+  cluega_tiktok_ad_manager_report_period_compare \
+  cluega_tiktok_ad_manager_report_creative_fatigue \
+  cluega_tiktok_ad_manager_report_ctr_decay \
+  cluega_tiktok_ad_manager_campaign_list \
+  cluega_tiktok_ad_manager_adgroup_list \
+  cluega_tiktok_ad_manager_ad_list
+```
+
+Đạt: in `đủ N tool bắt buộc`, thoát mã 0. Cổng mặc định **5235**, prefix của `tiktok-ads-mcp` là
+`/gateway/tiktok-mcp`.
+
+Gọi không kèm tên tool thì nó in toàn bộ danh sách — hữu ích khi muốn xem server phơi những gì.
+
+### 2.2 Dò `inputSchema` của một tool — công thức quan trọng nhất trong file này
+
+Đây là phép thử đã bắt được **bốn** lỗi hỏng im lặng: `opt_status` (không phải `operation_status`), id
+phải là **chuỗi JSON** chứ không phải mảng, `budget` nằm trong `params`, và tool đọc không có `*_ids`.
+Không cần token, không cần mạng, không cần gateway — gọi thẳng binary.
+
+```bash
+cd /Users/khanghuynh/Documents/Dev/cluega/mcp_gateway
+TOOLS='tiktok_update_adgroup tiktok_update_ad_status'   # đổi danh sách ở đây
+printf '%s\n%s\n%s\n' \
+'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}' \
+'{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+'{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+| timeout 20 ./data/bin/tiktok-ads-mcp 2>/dev/null | TOOLS="$TOOLS" python3 -c "
+import sys, json, os
+want = set(os.environ['TOOLS'].split())
+for line in sys.stdin:
+    try: m = json.loads(line)
+    except: continue
+    if m.get('id') == 2:
+        for t in m['result']['tools']:
+            if t['name'] in want:
+                s = t.get('inputSchema', {})
+                print('==', t['name'])
+                print('   required:', s.get('required'))
+                for k, v in (s.get('properties') or {}).items():
+                    print(f'   {k}: {v.get(\"type\")} — {(v.get(\"description\") or \"\")[:110]}')
+"
+```
+
+Đổi `./data/bin/tiktok-ads-mcp` thành `./data/bin/cluega-tiktok-ad-manager-mcp` để dò server còn lại.
+Danh sách binary có sẵn: `ls data/bin`.
+
+**Đọc kỹ cột `type`.** Một tham số khai `"string"` mà bạn truyền mảng thì TikTok bỏ qua, trả thành
+công, và không đổi gì. Đó là cách hỏng tệ nhất vì nó im lặng.
+
+### 2.3 Token có quyền ghi không
+
+```bash
+export ADGROUP_ID=...  ADVERTISER_ID=...      # ad group thử nghiệm, ngân sách nhỏ
+node scripts/pulse/probe-write.mjs http://127.0.0.1:5235/gateway/tiktok-mcp \
+  "$ADGROUP_ID" "$ADVERTISER_ID"
+```
+
+Script đặt ngân sách thành **đúng giá trị nó đang có** — đi hết đường ghi mà không đổi gì. Đạt: in
+`ghi được: token có quyền ghi`.
+
+---
+
+## 3. Khẳng định trên cơ sở dữ liệu
+
+### 3.1 Allowlist tool
+
+```bash
+# Mặc định: bot tên 'TikTok Ads', kỳ vọng 14 tool (chưa bật tool ghi)
+docker exec -i rakazo-pg psql -U rakazo -d rakazo < scripts/pulse/assert-allowlist.sql
+
+# Sau khi bật 4 tool ghi:
+docker exec -i rakazo-pg psql -U rakazo -d rakazo \
+  -v expected=18 -f /dev/stdin < scripts/pulse/assert-allowlist.sql
+
+# Bot khác:
+docker exec -i rakazo-pg psql -U rakazo -d rakazo \
+  -v bot="'Meta Ads'" -f /dev/stdin < scripts/pulse/assert-allowlist.sql
+```
+
+Script so **tập hợp** tên tool, không chỉ đếm — nên 14 tool sai danh sách vẫn bị bắt.
+
+### 3.2 Rule phê duyệt
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select \"matchKind\", \"matchValue\", effect from action_approval_rules order by \"matchValue\";"
+```
+
+Đạt: đúng 4 hàng, `matchKind=tool`, `effect=require_approval`, giá trị là bốn tên tool ghi **dạng
+trần** (không có tiền tố `mcp__`) — `ruleMatches` tự khớp cả phần đuôi.
+
+Thêm rule (giao diện web không có ô cho `matchKind=tool`):
+
+```sql
+INSERT INTO action_approval_rules (id,"workspaceId","createdByUserId",effect,"matchKind","matchValue")
+VALUES
+ (gen_random_uuid()::text,'<ws>','<user>','require_approval','tool','tiktok_update_adgroup'),
+ (gen_random_uuid()::text,'<ws>','<user>','require_approval','tool','tiktok_update_ad_status'),
+ (gen_random_uuid()::text,'<ws>','<user>','require_approval','tool','tiktok_update_adgroup_status'),
+ (gen_random_uuid()::text,'<ws>','<user>','require_approval','tool','tiktok_update_campaign_status');
+```
+
+Lấy `<ws>` và `<user>`:
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select o.id as workspace, u.id as usr, u.email from organization o, \"user\" u limit 5;"
+```
+
+### 3.3 Run vừa chạy ra sao
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select id, status, trigger, \"modelId\", error,
+          round(extract(epoch from (\"completedAt\" - \"startedAt\"))::numeric,1) as giay
+   from runs order by \"createdAt\" desc limit 5;"
+```
+
+### 3.4 Bot đã gọi tool nào
+
+Đây là cách chắc nhất để biết bot *thật sự* làm gì, thay vì tin vào lời nó nói:
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select \"createdAt\", left(payload::text, 160) from events
+   where type = 'agent.tool.called' order by \"createdAt\" desc limit 20;"
+```
+
+### 3.5 Lệnh ghi ra ngoài — bảng quan trọng nhất khi test đường tiêu tiền
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select status, kind, left(request::text,120) as yeu_cau, left(result::text,80) as ket_qua,
+          round(extract(epoch from (\"updatedAt\" - \"createdAt\"))::numeric,1) as giay
+   from external_effects order by \"createdAt\" desc limit 10;"
+```
+
+`kind` là tên tool **có tiền tố** (`mcp__tiktok-mcp__tiktok_update_adgroup`). `status` đi qua
+`intended` → `completed`. Một lệnh ghi còn ở `intended` nghĩa là chưa chạy.
+
+---
+
+## 4. Test hành vi của bot
+
+### 4.1 Đường đọc — làm trước, an toàn nhất
+
+Chat thẳng với bot, không cần routine:
+
+> Cho tôi xem chi tiêu TikTok hôm qua, so với trung bình 7 ngày.
+
+Rồi §3.4 để xem nó gọi đúng tool đọc, và đối chiếu số với TikTok Ads Manager. Bốc 3 chiến dịch, lệch
+phải dưới 1%.
+
+### 4.2 Routine
+
+Tạo routine cron `0 9 * * *`, timezone theo tài khoản quảng cáo, rồi **bấm chạy thử** thay vì chờ sáng
+(`routines.testRun`). Kiểm bằng §3.3.
+
+Test lịch mà không chờ: đặt tạm cron thành phút kế tiếp, xem worker có nhặt không, rồi đổi lại.
+
+### 4.3 Đường ghi
+
+Yêu cầu bot đổi ngân sách một ad group nhỏ. Chuỗi kỳ vọng:
+
+1. Run chuyển `waiting_input` (§3.3)
+2. Thread hiện thẻ chờ duyệt
+3. `external_effects` có hàng mới, `status` chưa phải `completed` (§3.5)
+4. Bấm duyệt → `status` thành `completed`
+5. Trong 5 phút, TikTok Ads Manager thấy giá trị mới
+
+**Nếu bước 5 không đổi mà bước 4 báo thành công** → khoá bên trong `params` sai tên. Quay lại §2.2 lấy
+tên thật, sửa `adActionToolCall` trong `packages/core/src/ad-action.ts` và test kèm theo.
+
+---
+
+## 5. Test ép lỗi
+
+Ba phép này kiểm rào an toàn có thật sự chặn hay không. Làm sau mỗi lần đổi rule hoặc đổi guard.
+
+### 5.1 ASSERT-4 — không duyệt thì không ghi
+
+Yêu cầu bot đổi ngân sách. Kỳ vọng: run dừng ở `waiting_input`, và **chưa** có lệnh ghi nào tới TikTok.
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select status, kind from external_effects order by \"createdAt\" desc limit 3;"
+```
+
+Hàng mới nhất phải chưa `completed`. Nếu nó đã `completed` mà bạn chưa bấm gì → **rule không khớp**,
+kiểm §3.2 ngay và dừng test đường ghi.
+
+### 5.2 ASSERT-5 — trần ±50%
+
+Yêu cầu bot giảm ngân sách xuống còn 10% giá trị hiện tại.
+
+Lưu ý: hiện `assertBudgetChangeWithinCap` **chưa nối vào executor**, nên phép này chỉ kiểm được model
+có tự tuân prompt hay không, chưa phải rào cứng. Rào cứng có sau khi làm plan nối executor. Test cứng
+ngay bây giờ thì dùng §1.1 với `ad-budget-cap.test.ts`.
+
+### 5.3 ASSERT-7 — model hỏng thì báo cáo vẫn còn
+
+Đặt tạm khoá model sai, chạy `routines.testRun`, rồi mở dashboard.
+
+```bash
+docker exec rakazo-pg psql -U rakazo -d rakazo -c \
+  "select id, status, error from runs order by \"createdAt\" desc limit 1;"
+```
+
+Kỳ vọng: run lỗi, nhưng trang báo cáo vẫn hiển thị đủ số liệu. Khôi phục khoá sau khi kiểm.
+
+---
+
+## 6. Đo độ trễ (ASSERT-8)
+
+Hai ngưỡng: kéo dữ liệu một tài khoản P95 dưới 3 phút; từ lúc bấm nút tới lúc TikTok đổi P95 dưới 60
+giây. Cần ~20 lượt để P95 có nghĩa.
+
+```bash
+# P95 thời lượng run
+docker exec rakazo-pg psql -U rakazo -d rakazo -tAc \
+ "select round(extract(epoch from (\"completedAt\" - \"startedAt\"))::numeric,1)
+  from runs where \"completedAt\" is not null order by \"createdAt\" desc limit 20;" \
+| sort -n | awk 'NF{v[++n]=$1} END{if(n)print "P95 run:", v[int(n*0.95+0.5)], "giây (trần 180)"}'
+
+# P95 thời lượng một lệnh ghi ra ngoài
+docker exec rakazo-pg psql -U rakazo -d rakazo -tAc \
+ "select round(extract(epoch from (\"updatedAt\" - \"createdAt\"))::numeric,1)
+  from external_effects where status = 'completed' order by \"createdAt\" desc limit 20;" \
+| sort -n | awk 'NF{v[++n]=$1} END{if(n)print "P95 ghi:", v[int(n*0.95+0.5)], "giây (trần 60)"}'
+```
+
+Truy vấn trong `docs/superpowers/plans/2026-08-25-pulse-ad-loop.md` Task 9 bước 5 dùng cột
+`approvedAt`/`completedAt` của `external_effects` — **hai cột đó không tồn tại**. Dùng bản trên.
+
+---
+
+## 7. Nghiệm thu chính thức
+
+`acceptance-log.md`, 8 tình huống, do người **không phải** người viết mã thao tác, phán định có/không.
+Chạy đủ một lượt mỗi ngày kể từ mốc M2. Ghi cả hai số P95 ở §6 vào cuối bảng.
+
+---
+
+## 8. Luật an toàn khi test trên tài khoản thật
+
+1. Ad group ngân sách nhỏ, hoặc chiến dịch đã tắt. Không bao giờ test trên chiến dịch đang chạy chính.
+2. §2.3 trước §4.3 — chứng minh quyền ghi bằng phép ghi vô hại trước khi ghi thật.
+3. Ghi lại giá trị cũ trước khi bấm. Hiện `from` chưa được ép bắt buộc trong đường chạy thật, nên bản
+   ghi để hoàn tác là do bạn tự giữ.
+4. Sau mỗi lệnh ghi, đối chiếu TikTok Ads Manager bằng mắt. Đừng tin `status = completed` một mình.
+5. Đừng dùng `pnpm compose:down` — script đó có `-v`, xoá volume Postgres.
+
+---
+
+## 9. Triệu chứng → nguyên nhân
+
+| Triệu chứng | Nghĩ tới |
+|---|---|
+| `probe-mcp` không kết nối được | Gateway chưa lên, hoặc sai cổng (mặc định 5235), hoặc sai prefix (`/gateway/tiktok-mcp`) |
+| `probe-mcp` in `thiếu: ...` | Config chưa nạp server đó, hoặc binary trong `data/bin` thiếu |
+| Bot không thấy tool nào | `allowedTools` rỗng mà `allowAllTools=false` — kiểm §3.1 |
+| Bot ghi được mà không hỏi ai | **Rule không khớp.** Kiểm §3.2. Đây là lỗi M1, tên tool tới executor có tiền tố `mcp__<slug>__` |
+| Duyệt xong, `status=completed`, TikTok không đổi | Khoá trong `params` sai tên — §2.2 |
+| Kiểm chứng luôn trả `unverified` | Tên trường trong response, hoặc `filters` sai khoá — §2.2 rồi đọc `ad-verify.ts` |
+| Bot trả lời `invalid x-api-key` | Khoá model sai; kiểm `user_model_credentials` và bản mã trong `secrets` |
+| `pnpm install` báo lỗi engine | Node sai phiên bản; phải là v24.18.0 |
+| Run kẹt ở `waiting_input` mãi | Đang chờ người duyệt — đúng như thiết kế, không phải lỗi |
+| Test đỏ ở `desktop-sandbox` hoặc `voice-http` | Có sẵn từ trước, xem §1.2 |
