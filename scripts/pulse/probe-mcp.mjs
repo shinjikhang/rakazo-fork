@@ -20,7 +20,10 @@ async function rpc(body, sessionId) {
     .map((l) => l.replace(/^data:\s*/, "").trim())
     .filter((l) => l.startsWith("{"))
     .pop();
-  return { session: res.headers.get("mcp-session-id") ?? sessionId, json: line ? JSON.parse(line) : null };
+  return {
+    session: res.headers.get("mcp-session-id") ?? sessionId,
+    json: line ? JSON.parse(line) : null,
+  };
 }
 
 const init = await rpc({

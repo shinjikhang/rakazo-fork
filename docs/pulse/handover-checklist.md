@@ -3,6 +3,9 @@
 Theo Ruling R3: những bước dưới đây cần token TikTok thật, biến môi trường của `mcp_gateway`, hoặc
 thao tác trên trình duyệt. Subagent đã dựng sẵn mọi file; phần còn lại là chạy và bấm.
 
+Hai biến đường dẫn dùng suốt tài liệu — đặt theo máy của bạn:
+`export MCP_GATEWAY_DIR=~/dev/cluega/mcp_gateway` và `export REPO=~/dev/cluega/rakazo`.
+
 Thứ tự bắt buộc: **H1 → H2 → H2b → H3 → H4 → H5 → H6**.
 
 Hai cổng chặn không được bỏ qua:
@@ -15,7 +18,7 @@ Hai cổng chặn không được bỏ qua:
 ## H1 · Bật gateway và xác minh tool (Task 1, bước 2–4)
 
 ```bash
-cd /Users/khanghuynh/Documents/Dev/cluega/mcp_gateway
+cd "$MCP_GATEWAY_DIR"
 # Cấp từ nơi lưu bí mật của đội, đừng ghi vào file trong repo:
 #   CDP_BASE_URL, CDP_SERVICE_TOKEN, CDP_TENANT_ID, AD_MANAGER_BASE_URL
 #   CLUEGA_TIKTOK_AD_MANAGER_API_BASE_URL, CLUEGA_TIKTOK_AD_MANAGER_REQUEST_TIMEOUT
@@ -25,7 +28,7 @@ make run
 Rồi ở repo rakazo:
 
 ```bash
-cd /Users/khanghuynh/Documents/Dev/cluega/rakazo
+cd "$REPO"
 export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"
 
 node scripts/pulse/probe-mcp.mjs http://127.0.0.1:8080/gateway/tiktok-ads-mcp \
@@ -111,10 +114,11 @@ Mở http://127.0.0.1:5173
 4. **Chưa bật 4 tool ghi** ở bước này.
 
 ```bash
-docker exec -i rakazo-pg psql -U rakazo -d rakazo < scripts/pulse/assert-allowlist.sql
+docker exec -i rakazo-pg psql -U rakazo -d rakazo -v bot='TikTok Ads' \
+  -f - < scripts/pulse/assert-allowlist.sql
 ```
 
-Đạt: `NOTICE: allowlist đúng: 14 tool, không server nào mở toàn bộ`.
+Đạt: `NOTICE: allowlist đúng: 14 tool cho bot TikTok Ads, không server nào mở toàn bộ`.
 
 ## H4 · Tạo rule phê duyệt rồi mới bật tool ghi (Task 3, bước 5–6)
 
@@ -132,10 +136,15 @@ docker exec rakazo-pg psql -U rakazo -d rakazo -c \
 
 Đạt: đúng 4 hàng, `matchKind=tool`, `effect=require_approval`.
 
-2. Chỉ khi đủ 4 hàng: thêm 4 tool ghi vào allowlist của nguồn `tiktok-ads-mcp`, sửa `14` thành `18`
-   trong `scripts/pulse/assert-allowlist.sql`, chạy lại khẳng định.
+2. Chỉ khi đủ 4 hàng: thêm 4 tool ghi vào allowlist của nguồn `tiktok-ads-mcp`, rồi chạy lại khẳng
+   định với `-v expected=18`.
 
-Đạt: `NOTICE: allowlist đúng: 18 tool, không server nào mở toàn bộ`.
+```bash
+docker exec -i rakazo-pg psql -U rakazo -d rakazo -v bot='TikTok Ads' -v expected=18 \
+  -f - < scripts/pulse/assert-allowlist.sql
+```
+
+Đạt: `NOTICE: allowlist đúng: 18 tool cho bot TikTok Ads, không server nào mở toàn bộ`.
 
 ## H5 · System prompt và routine 09:00 (Task 4, bước 5–6)
 

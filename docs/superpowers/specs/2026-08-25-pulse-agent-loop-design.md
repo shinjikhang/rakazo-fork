@@ -210,7 +210,7 @@ Postgres `rakazo-pg` cổng 5434. Gần như không viết code.
 
 1. Bật `mcp_gateway` với `configs/tiktok-mcp-stdio.yaml` và `configs/cluega-tiktok-ad-manager-mcp.yaml`.
 2. Đăng ký hai URL gateway vào Rakazo dạng HTTPS MCP server.
-3. Đặt allowlist 17 tool ở mục 4.
+3. Đặt allowlist 18 tool ở mục 4.
 4. Tạo bot **TikTok Ads**, viết system prompt theo mẫu ba đoạn và cấu trúc bốn phần.
 5. Tạo routine cron `0 9 * * *`.
 6. Bật cổng phê duyệt cho bốn tool ghi.
@@ -256,7 +256,7 @@ thao tác, phán định có hoặc không.
 
 | # | Rủi ro | Xử lý ở đợt này |
 |---|---|---|
-| 1 | Chọn sai tool trong 246 — dư thì model gọi nhầm, thiếu thì vòng lặp hở | allowlist 17 tool, chặn hai lớp, rà lại sau mỗi mốc |
+| 1 | Chọn sai tool trong 246 — dư thì model gọi nhầm, thiếu thì vòng lặp hở | allowlist 18 tool, chặn hai lớp, rà lại sau mỗi mốc |
 | 2 | Đề xuất sai của AI gây thiệt hại | luôn là đề xuất kèm người xác nhận; mọi lệnh lưu lý do và người duyệt |
 | 3 | Prompt injection từ tên chiến dịch và nội dung quảng cáo | model chỉ điền trường, render bằng template; bộ kiểm thử đối kháng tối thiểu 20 ca |
 | 4 | Độ trễ dữ liệu TikTok — số hôm qua còn chỉnh trong 24–48 giờ | kéo bù 7 ngày để tự sửa số cũ |
