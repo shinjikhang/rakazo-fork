@@ -1,4 +1,5 @@
 export * from "./action-approval.js";
+export * from "./ad-approval.js";
 export * from "./answerable-ask.js";
 export * from "./async.js";
 export * from "./attachments.js";
