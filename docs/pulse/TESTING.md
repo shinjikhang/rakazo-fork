@@ -292,6 +292,76 @@ tail -n +$((BEFORE+1)) "$L" | grep -iE "internal|tiktok|401|404"
 
 Không có dòng nào nghĩa là MCP chưa hề gọi tới cdp. Có 401 là sai khoá. Có 404 là thiếu route.
 
+### 2.3c Luồng chính — `cluega_ad_manager` ở cổng 8896
+
+Chạy thật 25/08. Service **không nằm trong `~/Documents/Dev/cluega/`** mà ở
+`~/Documents/Dev/cluega_ad_manager_golang`.
+
+**Cảnh báo trước khi khởi động: nó chạy migration vô điều kiện.**
+`internal/infrastructure/bootstrap/database.go:20` gọi `migrations.Run` không có cờ nào tắt được, và
+11 file SQL trong đó chứa **6 `DELETE`, 24 `UPDATE`, 7 `DROP`** — không phải no-op. Trỏ vào DB dev
+dùng chung mà để nó chạy là sửa dữ liệu của người khác. Comment đầu file nói thẳng: *"Run 在服务启动时
+无条件执行"*. Dòng log `[migrate] schema up to date` in ra ở cuối **vô điều kiện**, không phải kết quả
+kiểm tra — đừng tin nó.
+
+Cách chạy an toàn:
+
+```bash
+cd ~/Documents/Dev/cluega_ad_manager_golang
+
+# 1. Override DB bằng config.local.toml (đã bị .gitignore, merge đè lên config.toml)
+cat > config.local.toml <<'EOF'
+[psql]
+host = "<host dev>"
+port = 5432
+user = "<user>"
+pass = "<pass>"
+name = "cdp_cluega_ad_manager"
+ssl_mode = "require"
+EOF
+chmod 600 config.local.toml
+
+# 2. Tắt migration — SỬA TẠM, hoàn tác trước khi commit
+#    comment khối migrations.Run trong internal/infrastructure/bootstrap/database.go
+#    hoàn tác: git checkout -- internal/infrastructure/bootstrap/database.go
+
+# 3. Chạy
+go run ./cmd/server
+```
+
+Xác nhận migration KHÔNG chạy: `grep -c "\[migrate\]" <log>` phải ra **0**.
+
+**Xác thực.** ad_manager kiểm JWT HMAC, khoá và issuer nằm ngay trong `config.toml` mục `[jwt]`
+(`mode = "hmac"`, `key` là hex, `issuer`). Claim cần: `tenant_id`, `org_role`, `iss`, `sub`, `exp`.
+Ký bằng Python là đủ — xem `[jwt]` để lấy khoá, decode hex thành bytes, ký HS256.
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $JWT" \
+  "http://localhost:8896/internal/mcp/advertiser/list?pagesize=5"     # mong đợi 200
+```
+
+Rồi qua MCP:
+
+```bash
+node scripts/pulse/call-tool.mjs \
+  http://127.0.0.1:5235/gateway/cluega-tiktok-ad-manager-mcp/mcp \
+  cluega_tiktok_ad_manager_report_daily_summary \
+  '{"advertiser_id":"<adv>","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",
+    "report_level":"AUCTION_ADVERTISER"}' \
+  -H "Authorization: Bearer $JWT"
+```
+
+**Trạng thái 25/08:** chuỗi thông, trả `success: true` với envelope báo cáo đúng cấu trúc, nhưng
+`total_records: 0` kể cả với advertiser có dữ liệu trong `tiktok_reports_daily_2026_08` và trạng thái
+`AUTHORIZED`. Nghi do `sub` trong JWT là user bịa — `AdvertiserListValidate` đọc
+`r.Uuid = c.GetString("uuid")` mà `uuid` chính là claim `sub` (`middleware/auth.go:77`). Cần một user
+uuid thật của ad_manager để xác nhận. Đây là chi tiết phân quyền dữ liệu bên trong ad_manager, không
+phải lỗi của chuỗi MCP.
+
+**Tác dụng phụ phải biết:** khởi động ad_manager sẽ bật các worker Asynq chạy theo lịch, và chúng
+**ghi vào DB dev** khi đồng bộ thành công. Ở lần chạy 25/08 chúng thất bại ở bước credential nên chưa
+ghi, nhưng đừng để service chạy nền quên tắt.
+
 ### 2.4 Token có quyền ghi không
 
 ```bash
