@@ -274,10 +274,8 @@ JSON**, không phải mảng — cùng cái bẫy `type: "string"` đã gặp �
 tường minh — đặt trong system prompt của bot, hoặc để khách nói ra. Chỉ mất khả năng bot tự liệt kê
 advertiser cho tới khi cdp có endpoint `metadata`.
 
-> **Đây là đường tạm, không phải thiết kế.** Luồng chính để lấy báo cáo là
-> `cluega-tiktok-ad-manager-mcp` (spec §4: đã tổng hợp sẵn, rẻ, không đụng hạn mức TikTok). Nó đang
-> tắc ở local vì service `cluega_ad_manager` cổng 8896 chưa chạy. Khi nó sống lại thì bỏ `tiktok_get_reports`
-> khỏi đường lấy báo cáo và trả nó về đúng vai trò kiểm chứng. Xem `STATUS.md` mục *Luồng lấy báo cáo*.
+> **Đây là đường dự phòng.** Luồng chính để lấy báo cáo là `cluega-tiktok-ad-manager-mcp` (spec §4)
+> và nó **đã chạy được** — xem §2.3c. Chỉ dùng `tiktok_get_reports` khi ad-manager không dùng được.
 
 **Cách chẩn đoán nhanh** — chạy lệnh gọi tool rồi soi log cdp trong cùng khoảng thời gian:
 
@@ -370,9 +368,15 @@ clicks: 60340 · total_records: 4`.
 **Dấu hiệu nhận biết:** API trả 200 và `success: true` nhưng `total_records: 0` với advertiser bạn
 biết chắc có số liệu → kiểm `debug` trước tiên, đừng đi đào dữ liệu.
 
-**Tác dụng phụ phải biết:** khởi động ad_manager sẽ bật các worker Asynq chạy theo lịch, và chúng
-**ghi vào DB dev** khi đồng bộ thành công. Ở lần chạy 25/08 chúng thất bại ở bước credential nên chưa
-ghi, nhưng đừng để service chạy nền quên tắt.
+**Tác dụng phụ phải biết:** ở `workers_mode = "all"` (mặc định), khởi động ad_manager bật scheduler
+fan-out **một task cho MỖI advertiser** — tenant thử nghiệm có 4.346, tất cả thất bại ở bước credential
+rồi retry trong vòng lặp nóng (~1.860 dòng log/giây), mỗi task đều truy vấn DB dev. Đặt
+`workers_mode = "none"` trong `config.local.toml`: chỉ chạy HTTP, không worker. Đường MCP không cần
+worker nên vẫn hoạt động đầy đủ.
+
+**Trạng thái 25/08:** luồng chính chạy đủ. `advertiser_list` trả 24 advertiser, `report_daily_summary`
+trả số liệu thật (`spend 2678.28 · impressions 500143 · clicks 60340 · total_records 4`). Bot **tự tìm
+được advertiser**, không cần điền tay `advertiser_id` vào prompt.
 
 ### 2.4 Token có quyền ghi không
 

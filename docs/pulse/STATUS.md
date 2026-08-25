@@ -44,22 +44,25 @@ Vòng lặp bạn test hôm nay chạy trên đường native của Rakazo, khô
 Hai guard quan trọng nhất cho tiền — **allowlist** và **người duyệt** — đã sống. Bộ hạn chế thiệt hại
 và bản ghi để hoàn tác thì chưa. **Test trên ad group ngân sách nhỏ, đừng test trên chiến dịch chính.**
 
-### Luồng lấy báo cáo — cái nào là chính
+### Luồng lấy báo cáo — đã thông, không còn vá tạm
 
-**Luồng chính: `cluega-tiktok-ad-manager-mcp`.** Spec §4 chọn nó cho phân tích hằng ngày vì nó đọc
-từ DB của Cluega: đã tổng hợp sẵn, rẻ, không đụng hạn mức tần suất của TikTok. Đây là thứ vòng lặp
-09:00 phải dùng khi chạy thật.
+Luồng chính theo spec §4 là `cluega-tiktok-ad-manager-mcp`: đọc từ DB của Cluega, đã tổng hợp sẵn, rẻ,
+không đụng hạn mức tần suất của TikTok. **Đã chạy được với số liệu thật** (25/08).
 
-**Đường tạm: `tiktok_get_reports` của `tiktok-ads-mcp`.** Gọi thẳng API TikTok. Dựng ra chỉ vì luồng
-chính đang tắc ở local (service `cluega_ad_manager` cổng 8896 chưa chạy, và nó không nằm trong
-`~/Documents/Dev/cluega/`). Đường này chậm hơn, tốn hạn mức, trả dữ liệu thô.
+Hai cách đi vòng từng ghi ở đây nay đã gỡ, vì nguyên nhân đã sửa tận gốc:
 
-Vá tạm này nằm ở hai chỗ, gỡ ra khi luồng chính sống lại:
-- mục *Đường tạm* trong `tiktok-bot-prompt.md`
-- ô `advertiser_id` điền tay trong cùng file — có vì `cdp_backend` thiếu route `metadata` nên bot
-  không tự liệt kê được advertiser
+| Vá tạm cũ | Vì sao không cần nữa |
+|---|---|
+| Dùng `tiktok_get_reports` thay cho ad-manager | `cluega_ad_manager` đã chạy ở 8896, luồng chính hoạt động |
+| Điền tay `advertiser_id` vào system prompt | `advertiser_list` trả 24 advertiser; bot tự tìm được |
 
-Không để đường tạm thành mặc định. Nó tồn tại để mức 1 demo được, không phải để vận hành.
+Cả hai đều bắt nguồn từ cùng một lỗi: `config.toml` của ad_manager để `debug = true`, khiến
+`routes/internal.go:20` bỏ qua JWT và ép `tenant_id="debug-tenant"` — mọi truy vấn lọc theo tenant trả
+rỗng, trong khi API vẫn trả `success: true`. Đặt `debug = false` là hết.
+
+**System prompt là tuỳ chọn.** Bot kết nối và gọi tool được mà không cần nó. Nó chỉ định hình chất
+lượng đầu ra (cấu trúc bốn phần, bắt ghi giá trị cũ khi đề xuất đổi ngân sách) và thêm một rào chống
+prompt injection.
 
 ### Cập nhật 25/08 tối — đường đọc TikTok đã thông
 
