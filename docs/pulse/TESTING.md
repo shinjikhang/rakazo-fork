@@ -351,12 +351,24 @@ node scripts/pulse/call-tool.mjs \
   -H "Authorization: Bearer $JWT"
 ```
 
-**Trạng thái 25/08:** chuỗi thông, trả `success: true` với envelope báo cáo đúng cấu trúc, nhưng
-`total_records: 0` kể cả với advertiser có dữ liệu trong `tiktok_reports_daily_2026_08` và trạng thái
-`AUTHORIZED`. Nghi do `sub` trong JWT là user bịa — `AdvertiserListValidate` đọc
-`r.Uuid = c.GetString("uuid")` mà `uuid` chính là claim `sub` (`middleware/auth.go:77`). Cần một user
-uuid thật của ad_manager để xác nhận. Đây là chi tiết phân quyền dữ liệu bên trong ad_manager, không
-phải lỗi của chuỗi MCP.
+**PHẢI đặt `debug = false`.** `config.toml` mặc định `debug = true`, và khi đó
+`routes/internal.go:20` cài một middleware **bỏ qua JWT** rồi ép:
+
+```go
+c.Set("uuid", "debug-user")
+c.Set("tenant_id", "debug-tenant")   // tenant không tồn tại
+```
+
+Hệ quả: mọi truy vấn lọc theo tenant trả **0 dòng**, trong khi API vẫn trả `success: true`, HTTP 200 và
+envelope đúng cấu trúc. Không một thông báo lỗi nào. Đây là kiểu hỏng khó thấy nhất — dễ tưởng là
+"chưa có dữ liệu" và đi tìm nhầm chỗ hàng giờ.
+
+Đặt `debug = false` trong `config.local.toml` thì `InternalAuth()` đọc tenant thật từ JWT. Kiểm chứng
+25/08: cùng một lời gọi, trước `total_records: 0`, sau `spend: 2678.28 · impressions: 500143 ·
+clicks: 60340 · total_records: 4`.
+
+**Dấu hiệu nhận biết:** API trả 200 và `success: true` nhưng `total_records: 0` với advertiser bạn
+biết chắc có số liệu → kiểm `debug` trước tiên, đừng đi đào dữ liệu.
 
 **Tác dụng phụ phải biết:** khởi động ad_manager sẽ bật các worker Asynq chạy theo lịch, và chúng
 **ghi vào DB dev** khi đồng bộ thành công. Ở lần chạy 25/08 chúng thất bại ở bước credential nên chưa
