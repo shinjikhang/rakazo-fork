@@ -38,6 +38,7 @@ describe("hợp đồng AdAction", () => {
     expect(inverse.from).toBe(300000);
     expect(inverse.to).toBe(500000);
     expect(inverse.target.object_id).toBe("adg_3301");
+    expect(inverse.account_id).toBe("tt_88231");
   });
 
   it("nghịch đảo của pause là resume", () => {
@@ -110,5 +111,54 @@ describe("hợp đồng AdAction", () => {
   it("từ chối khi thiếu account_id — không biết chạy trên tài khoản nào", () => {
     const { account_id: _dropped, ...withoutAccountId } = budgetAction;
     expect(() => parseAdAction(withoutAccountId)).toThrow(/account_id/);
+  });
+
+  it("từ chối đổi ngân sách ở cấp campaign — ASSERT-R6, không có tool campaign-budget", () => {
+    expect(() =>
+      parseAdAction({
+        ...budgetAction,
+        target: { level: "campaign", object_id: "cmp_9001" },
+      }),
+    ).toThrow(/adgroup/);
+  });
+
+  it("ánh xạ pause ở cấp adgroup sang tiktok_update_adgroup_status", () => {
+    const call = adActionToolCall(
+      parseAdAction({
+        action_id: "act_4",
+        account_id: "tt_88231",
+        snapshot_date: "2026-08-24",
+        op: "pause",
+        target: { level: "adgroup", object_id: "adg_3301" },
+        from: "ENABLE",
+        to: "DISABLE",
+        reason: "CTR giảm liên tục 5 ngày",
+        requires_confirm: true,
+      }),
+    );
+    expect(call.tool).toBe("tiktok_update_adgroup_status");
+    expect(JSON.parse(call.args.adgroup_ids as string)).toEqual(["adg_3301"]);
+    expect(call.args.opt_status).toBe("DISABLE");
+    expect(call.args.advertiser_id).toBe("tt_88231");
+  });
+
+  it("ánh xạ pause ở cấp campaign sang tiktok_update_campaign_status", () => {
+    const call = adActionToolCall(
+      parseAdAction({
+        action_id: "act_5",
+        account_id: "tt_88231",
+        snapshot_date: "2026-08-24",
+        op: "pause",
+        target: { level: "campaign", object_id: "cmp_9001" },
+        from: "ENABLE",
+        to: "DISABLE",
+        reason: "Ngân sách chiến dịch đã cạn",
+        requires_confirm: true,
+      }),
+    );
+    expect(call.tool).toBe("tiktok_update_campaign_status");
+    expect(JSON.parse(call.args.campaign_ids as string)).toEqual(["cmp_9001"]);
+    expect(call.args.opt_status).toBe("DISABLE");
+    expect(call.args.advertiser_id).toBe("tt_88231");
   });
 });

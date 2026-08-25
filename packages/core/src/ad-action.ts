@@ -30,6 +30,13 @@ const AdActionSchema = z
       });
     }
     if (NUMERIC_OPS.has(value.op)) {
+      if (value.target.level !== "adgroup") {
+        ctx.addIssue({
+          code: "custom",
+          message: `${value.op} chỉ áp dụng ở cấp adgroup, không phải ${value.target.level}`,
+        });
+        return;
+      }
       if (typeof value.from !== "number" || typeof value.to !== "number") {
         ctx.addIssue({ code: "custom", message: "from và to phải là số với thao tác đổi số" });
         return;
