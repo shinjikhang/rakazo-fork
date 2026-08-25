@@ -44,6 +44,23 @@ Vòng lặp bạn test hôm nay chạy trên đường native của Rakazo, khô
 Hai guard quan trọng nhất cho tiền — **allowlist** và **người duyệt** — đã sống. Bộ hạn chế thiệt hại
 và bản ghi để hoàn tác thì chưa. **Test trên ad group ngân sách nhỏ, đừng test trên chiến dịch chính.**
 
+### Luồng lấy báo cáo — cái nào là chính
+
+**Luồng chính: `cluega-tiktok-ad-manager-mcp`.** Spec §4 chọn nó cho phân tích hằng ngày vì nó đọc
+từ DB của Cluega: đã tổng hợp sẵn, rẻ, không đụng hạn mức tần suất của TikTok. Đây là thứ vòng lặp
+09:00 phải dùng khi chạy thật.
+
+**Đường tạm: `tiktok_get_reports` của `tiktok-ads-mcp`.** Gọi thẳng API TikTok. Dựng ra chỉ vì luồng
+chính đang tắc ở local (service `cluega_ad_manager` cổng 8896 chưa chạy, và nó không nằm trong
+`~/Documents/Dev/cluega/`). Đường này chậm hơn, tốn hạn mức, trả dữ liệu thô.
+
+Vá tạm này nằm ở hai chỗ, gỡ ra khi luồng chính sống lại:
+- mục *Đường tạm* trong `tiktok-bot-prompt.md`
+- ô `advertiser_id` điền tay trong cùng file — có vì `cdp_backend` thiếu route `metadata` nên bot
+  không tự liệt kê được advertiser
+
+Không để đường tạm thành mặc định. Nó tồn tại để mức 1 demo được, không phải để vận hành.
+
 ### Cập nhật 25/08 tối — đường đọc TikTok đã thông
 
 Đã chạy thật qua `mcp_gateway`: business center → advertiser → campaigns → **báo cáo hiệu suất có số

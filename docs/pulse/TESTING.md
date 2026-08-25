@@ -274,6 +274,11 @@ JSON**, không phải mảng — cùng cái bẫy `type: "string"` đã gặp �
 tường minh — đặt trong system prompt của bot, hoặc để khách nói ra. Chỉ mất khả năng bot tự liệt kê
 advertiser cho tới khi cdp có endpoint `metadata`.
 
+> **Đây là đường tạm, không phải thiết kế.** Luồng chính để lấy báo cáo là
+> `cluega-tiktok-ad-manager-mcp` (spec §4: đã tổng hợp sẵn, rẻ, không đụng hạn mức TikTok). Nó đang
+> tắc ở local vì service `cluega_ad_manager` cổng 8896 chưa chạy. Khi nó sống lại thì bỏ `tiktok_get_reports`
+> khỏi đường lấy báo cáo và trả nó về đúng vai trò kiểm chứng. Xem `STATUS.md` mục *Luồng lấy báo cáo*.
+
 **Cách chẩn đoán nhanh** — chạy lệnh gọi tool rồi soi log cdp trong cùng khoảng thời gian:
 
 ```bash
