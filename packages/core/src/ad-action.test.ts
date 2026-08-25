@@ -3,6 +3,7 @@ import { adActionToolCall, inverseAdAction, parseAdAction } from "./ad-action.js
 
 const budgetAction = {
   action_id: "act_7731",
+  account_id: "tt_88231",
   snapshot_date: "2026-08-24",
   op: "set_daily_budget",
   target: { level: "adgroup", object_id: "adg_3301" },
@@ -42,6 +43,7 @@ describe("hợp đồng AdAction", () => {
   it("nghịch đảo của pause là resume", () => {
     const pause = parseAdAction({
       action_id: "act_1",
+      account_id: "tt_88231",
       snapshot_date: "2026-08-24",
       op: "pause",
       target: { level: "ad", object_id: "ad_55120" },
@@ -66,6 +68,7 @@ describe("hợp đồng AdAction", () => {
     const call = adActionToolCall(
       parseAdAction({
         action_id: "act_2",
+        account_id: "tt_88231",
         snapshot_date: "2026-08-24",
         op: "pause",
         target: { level: "ad", object_id: "ad_55120" },
@@ -82,5 +85,30 @@ describe("hợp đồng AdAction", () => {
       ad_ids: JSON.stringify(["ad_55120"]),
       opt_status: "DISABLE",
     });
+  });
+
+  it("ánh xạ tool gắn advertiser_id từ account_id — đổi ngân sách và pause", () => {
+    const budgetCall = adActionToolCall(parseAdAction(budgetAction));
+    expect(budgetCall.args.advertiser_id).toBe("tt_88231");
+
+    const pauseCall = adActionToolCall(
+      parseAdAction({
+        action_id: "act_3",
+        account_id: "tt_88231",
+        snapshot_date: "2026-08-24",
+        op: "pause",
+        target: { level: "ad", object_id: "ad_55120" },
+        from: "ENABLE",
+        to: "DISABLE",
+        reason: "CTR giảm liên tục 5 ngày",
+        requires_confirm: true,
+      }),
+    );
+    expect(pauseCall.args.advertiser_id).toBe("tt_88231");
+  });
+
+  it("từ chối khi thiếu account_id — không biết chạy trên tài khoản nào", () => {
+    const { account_id: _dropped, ...withoutAccountId } = budgetAction;
+    expect(() => parseAdAction(withoutAccountId)).toThrow(/account_id/);
   });
 });

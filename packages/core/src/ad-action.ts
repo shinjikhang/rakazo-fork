@@ -6,6 +6,7 @@ const NUMERIC_OPS = new Set(["set_daily_budget", "set_bid"]);
 const AdActionSchema = z
   .object({
     action_id: z.string().min(1),
+    account_id: z.string({ error: "account_id là bắt buộc" }).min(1, "account_id là bắt buộc"),
     snapshot_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     op: z.enum(["pause", "resume", "set_daily_budget", "set_bid"]),
     target: z.object({
@@ -78,7 +79,11 @@ export function adActionToolCall(action: AdAction): {
     const field = action.op === "set_daily_budget" ? "budget" : "bid_price";
     return {
       tool: "tiktok_update_adgroup",
-      args: { adgroup_id: objectId, params: JSON.stringify({ [field]: action.to }) },
+      args: {
+        adgroup_id: objectId,
+        advertiser_id: action.account_id,
+        params: JSON.stringify({ [field]: action.to }),
+      },
     };
   }
   // Ba tool *_status dùng opt_status (không phải operation_status), và các
@@ -88,17 +93,29 @@ export function adActionToolCall(action: AdAction): {
   if (level === "ad") {
     return {
       tool: "tiktok_update_ad_status",
-      args: { ad_ids: JSON.stringify([objectId]), opt_status: optStatus },
+      args: {
+        ad_ids: JSON.stringify([objectId]),
+        advertiser_id: action.account_id,
+        opt_status: optStatus,
+      },
     };
   }
   if (level === "adgroup") {
     return {
       tool: "tiktok_update_adgroup_status",
-      args: { adgroup_ids: JSON.stringify([objectId]), opt_status: optStatus },
+      args: {
+        adgroup_ids: JSON.stringify([objectId]),
+        advertiser_id: action.account_id,
+        opt_status: optStatus,
+      },
     };
   }
   return {
     tool: "tiktok_update_campaign_status",
-    args: { campaign_ids: JSON.stringify([objectId]), opt_status: optStatus },
+    args: {
+      campaign_ids: JSON.stringify([objectId]),
+      advertiser_id: action.account_id,
+      opt_status: optStatus,
+    },
   };
 }
