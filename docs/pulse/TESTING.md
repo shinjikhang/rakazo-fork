@@ -174,13 +174,27 @@ Thoát 0 là gọi được. Thoát 1 kèm `isError: true` là tool từ chối 
 
 Hai thông báo đã gặp thật, cả hai đều là **thiếu token**, không phải lỗi cấu hình:
 
-| Server | Thông báo | Cách xử lý |
+| Server | Thông báo | Cách xử lý — đã kiểm thật |
 |---|---|---|
-| ad-manager | `missing Authorization: forward user Bearer token or set CLUEGA_TIKTOK_AD_MANAGER_ACCESS_TOKEN for local dev only` | truyền header `Authorization: Bearer <token>`, hoặc đặt biến môi trường đó cho dev cục bộ |
-| tiktok-mcp | `tenant context is required (missing or invalid forwarded auth token)` | như trên |
+| tiktok-mcp | `tenant context is required (missing or invalid forwarded auth token)` | **chỉ cần header `x-tenant-id: <uuid tenant>`**, KHÔNG cần JWT. Thông báo nói "auth token" nên dễ hiểu sai |
+| tiktok-mcp | `no active TikTok connection for this tenant` | qua được auth rồi; tenant chưa nối tài khoản quảng cáo TikTok — xem ghi chú dưới |
+| ad-manager | `missing Authorization: forward user Bearer token or set CLUEGA_TIKTOK_AD_MANAGER_ACCESS_TOKEN for local dev only` | cần Bearer JWT của CDP. Nhưng service đích (`CLUEGA_TIKTOK_AD_MANAGER_API_BASE_URL`, mặc định `localhost:8896` = `cluega_ad_manager`, repo ngoài) phải đang chạy |
 
-Khi đăng ký MCP server trong Rakazo, đặt header ngay ở đó (`mcp_servers.headers`): tên `Authorization`,
-giá trị `Bearer <token>`. Đó chính là đường mà thông báo lỗi chỉ ra — "forward user Bearer token".
+Gateway đã chuyển tiếp sẵn cả `authorization` và `x-tenant-id`
+(`configs/mcp-gateway.yaml`: `FORWARD_ALLOW_HEADERS` mặc định), không cần sửa gì.
+
+Khi đăng ký MCP server trong Rakazo thì đặt header ngay ở đó (`mcp_servers.headers`) — với tiktok-mcp
+là `x-tenant-id`, với ad-manager là `Authorization: Bearer <jwt>`.
+
+**Về "no active TikTok connection":** kết nối quảng cáo TikTok không nằm trong DB `cluega_cdp`. Toàn
+bộ DB đó chỉ có `tiktok_advertiser_bindings` (rỗng), không có bảng connection/token nào cho quảng cáo
+— khác với Google (`google_ads_connections` + `google_ads_advertisers`) và Facebook
+(`facebook_ad_accounts`). Bảng `tiktok_connections` có dữ liệu nhưng là Login Kit của creator
+(`tiktok_open_id`, `avatar_url`, `granted_scopes`), không phải tài khoản quảng cáo. Theo
+`mcp_gateway/.env.example`, token quảng cáo "sourced from BE IM service" ở bảng
+`integration_tiktok_tokens` — và các container IM (`cluega_im_postgres`, `cluega_im_manage_db`) đang
+tắt. Muốn có dữ liệu thì hoặc nối tài khoản quảng cáo qua UI Integrations của CDP, hoặc bật service IM,
+hoặc trỏ sang staging.
 
 ### 2.4 Token có quyền ghi không
 
