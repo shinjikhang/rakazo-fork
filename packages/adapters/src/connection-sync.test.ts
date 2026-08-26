@@ -16,17 +16,50 @@ function adsConnection(overrides: Partial<CdpConnection> = {}): CdpConnection {
   };
 }
 
-function fakePrisma() {
+// Real Prisma upserts/updates can target a compound-unique `where` instead of `id` (that's
+// exactly what this file is testing), so the fake records the create/create-adjacent id, not
+// where.id, and simulates the one behavior the real DB gives us for free: a row already
+// present under a pre-existing id is adopted (its stored id wins) instead of a duplicate.
+function fakePrisma(
+  preexisting: Array<{ table: string; id: string; where: Record<string, unknown> }> = [],
+) {
   const upserts: Array<{ table: string; id: string; data: Record<string, unknown> }> = [];
+  const rowsByTable = new Map<string, Array<{ id: string; where: Record<string, unknown> }>>();
+  for (const row of preexisting) {
+    const list = rowsByTable.get(row.table) ?? [];
+    list.push({ id: row.id, where: row.where });
+    rowsByTable.set(row.table, list);
+  }
+  // where clauses can nest a compound-unique object (e.g. { workspaceId_userId_slug: {...} }),
+  // so compare by value, not by reference.
+  const sameKey = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+    JSON.stringify(a) === JSON.stringify(b);
+
   const table = (name: string) => ({
-    upsert: vi.fn(async (args: { where: { id: string }; create: Record<string, unknown> }) => {
-      upserts.push({ table: name, id: args.where.id, data: args.create });
-      return args.create;
-    }),
-    update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
-      upserts.push({ table: `${name}:update`, id: args.where.id, data: args.data });
-      return args.data;
-    }),
+    upsert: vi.fn(
+      async (args: { where: Record<string, unknown>; create: Record<string, unknown> }) => {
+        const existing = (rowsByTable.get(name) ?? []).find((row) =>
+          sameKey(row.where, args.where),
+        );
+        const id = existing ? existing.id : ((args.create.id as string | undefined) ?? "");
+        upserts.push({ table: name, id, data: args.create });
+        // Mirror what a real upsert returns on adoption: the existing row's real id, not
+        // whatever id the caller offered in `create`.
+        return { ...args.create, id };
+      },
+    ),
+    update: vi.fn(
+      async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const existing = (rowsByTable.get(name) ?? []).find((row) =>
+          sameKey(row.where, args.where),
+        );
+        const id = existing
+          ? existing.id
+          : ((args.where.id as string | undefined) ?? JSON.stringify(args.where));
+        upserts.push({ table: `${name}:update`, id, data: args.data });
+        return { ...args.data, id };
+      },
+    ),
     deleteMany: vi.fn(async (args: unknown) => {
       upserts.push({ table: `${name}:deleteMany`, id: JSON.stringify(args), data: {} });
       return { count: 1 };
@@ -211,6 +244,30 @@ describe("connection sync", () => {
     const assignments = upserts.filter((row) => row.table === "botMcpServer");
     expect(assignments).toHaveLength(2);
     expect(new Set(assignments.map((row) => row.id)).size).toBe(2);
+  });
+
+  it("adopts a pre-existing mcp server row for the same (workspace, owner, slug) instead of duplicating it", async () => {
+    const staleId = "some-old-id-from-before-this-fix";
+    const { prisma, upserts } = fakePrisma([
+      {
+        table: "mcpServer",
+        id: staleId,
+        where: { workspaceId_userId_slug: { workspaceId: TENANT, userId: OWNER, slug: "cluega" } },
+      },
+    ]);
+    const report = await createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    }).syncOnce();
+
+    expect(report.connectionsFailed).toBe(0);
+    expect(report.botsCreated).toBe(1);
+    const servers = upserts.filter((row) => row.table === "mcpServer");
+    expect(servers).toHaveLength(1);
+    expect(servers[0]?.id).toBe(staleId);
+    const assignment = upserts.find((row) => row.table === "botMcpServer");
+    expect(assignment?.data.serverId).toBe(staleId);
   });
 
   it("revoking one of two connections withdraws only that tool grant and keeps the shared server enabled", async () => {

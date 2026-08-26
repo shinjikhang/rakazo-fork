@@ -62,8 +62,10 @@ export function createConnectionSync(
         (c) => c.kind === "ads" && c.status === "active" && c.connectedByUserId === owner,
       );
     // Every active connection of the same owner would otherwise upsert the identical shared
-    // row again; track which owners this pass already wrote so only the first does.
-    const serverUpserted = new Set<string>();
+    // row again; resolve it once per owner and reuse. The resolved id is the row's REAL id,
+    // which may differ from our deterministic `serverId` guess if an existing row (stale or
+    // manually made) already owned the (workspace, owner, "cluega") tuple and got adopted.
+    const resolvedServerId = new Map<string, string>();
 
     for (const connection of connections) {
       try {
@@ -94,8 +96,11 @@ export function createConnectionSync(
             },
             update: {},
           });
+          // A member row for this (org, user) pair may already exist under a different id
+          // (a manual invite, or a row from before this sync loop existed): look it up by
+          // the real unique tuple so we adopt it instead of colliding on create.
           await tx.member.upsert({
-            where: { id: `cdpmem_${tenantId}_${owner}` },
+            where: { organizationId_userId: { organizationId: tenantId, userId: owner } },
             create: {
               id: `cdpmem_${tenantId}_${owner}`,
               organizationId: tenantId,
@@ -129,25 +134,42 @@ export function createConnectionSync(
           }
 
           if (connection.status !== "active") {
-            // Withdraw only this connection's tool grant. The shared server row stays
-            // enabled if the owner has another active ads connection; only turn it off
-            // once nothing of theirs needs it. Bump revision either way so a cached MCP
-            // session for this owner drops the withdrawn tools (mcp-connector.ts:151).
-            await tx.botMcpServer.deleteMany({ where: { id: assignmentId } });
-            await tx.mcpServer.update({
-              where: { id: serverId },
+            // The shared server row stays enabled if the owner has another active ads
+            // connection; only turn it off once nothing of theirs needs it. Bump revision
+            // either way so a cached MCP session for this owner drops the withdrawn tools
+            // (mcp-connector.ts:151). Looked up by the real unique tuple, not our
+            // deterministic id, in case this row was adopted from a pre-existing one — and
+            // read back its real id, since bot_mcp_servers.serverId may point at that real
+            // id rather than our guess.
+            const server = await tx.mcpServer.update({
+              where: {
+                workspaceId_userId_slug: { workspaceId: tenantId, userId: owner, slug: "cluega" },
+              },
               data: {
                 revision: { increment: 1 },
                 updatedAt: now,
                 ...(ownerHasActiveAds(owner) ? {} : { enabled: false }),
               },
             });
+            // Withdraw only this connection's tool grant. Match on (botId, serverId), not
+            // assignmentId: a pre-existing assignment for this exact bot+server pair may
+            // carry a different id than our deterministic one.
+            await tx.botMcpServer.deleteMany({ where: { botId, serverId: server.id } });
             return;
           }
 
-          if (!serverUpserted.has(serverId)) {
-            await tx.mcpServer.upsert({
-              where: { id: serverId },
+          let realServerId = resolvedServerId.get(owner);
+          if (!realServerId) {
+            // A server row for this (workspace, owner, "cluega") tuple may already exist
+            // under a different id (a stale row from before this sync shared one row per
+            // owner, or a manually created one): look it up by the real unique tuple so we
+            // adopt it instead of colliding on create. Keep a deterministic `id` in the
+            // create branch only so a fresh row is still recognisable, and read back
+            // whichever id actually won (ours, or the adopted row's).
+            const server = await tx.mcpServer.upsert({
+              where: {
+                workspaceId_userId_slug: { workspaceId: tenantId, userId: owner, slug: "cluega" },
+              },
               create: {
                 id: serverId,
                 workspaceId: tenantId,
@@ -167,15 +189,18 @@ export function createConnectionSync(
               },
               update: { enabled: true, endpoint: deps.gatewayMcpUrl, updatedAt: now },
             });
-            serverUpserted.add(serverId);
+            realServerId = server.id;
+            resolvedServerId.set(owner, realServerId);
           }
+          // Same reasoning as the server row: a pre-existing assignment for this exact
+          // (botId, serverId) pair may carry a different id.
           await tx.botMcpServer.upsert({
-            where: { id: assignmentId },
+            where: { botId_serverId: { botId, serverId: realServerId } },
             create: {
               id: assignmentId,
               workspaceId: tenantId,
               botId,
-              serverId,
+              serverId: realServerId,
               userId: owner,
               allowAllTools: false,
               allowedTools: allowedToolsFor(connection),
