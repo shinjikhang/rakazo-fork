@@ -597,3 +597,23 @@ Chạy đủ một lượt mỗi ngày kể từ mốc M2. Ghi cả hai số P95
 | `pnpm install` báo lỗi engine | Node sai phiên bản; phải là v24.18.0 |
 | Run kẹt ở `waiting_input` mãi | Đang chờ người duyệt — đúng như thiết kế, không phải lỗi |
 | Test đỏ ở `desktop-sandbox` hoặc `voice-http` | Có sẵn từ trước, xem §1.2 |
+
+## Kiểm danh tính theo run
+
+Rakazo gửi `x-tenant-id` (= workspaceId) và `x-user-id` (= userId) trên mọi request MCP ra ngoài.
+Cấu hình header của người dùng không ghi đè được hai cái này.
+
+Xác nhận bằng log gateway: cho hai bot ở hai workspace gọi cùng một tool, log phải thấy hai
+`x-tenant-id` khác nhau. Đây là nghiệm thu #7 của spec `2026-08-26-cluega-mcp-connector-design.md`.
+
+Phiên MCP được cache theo `(server.id, workspaceId, userId)`. Nếu ai đó đưa khoá về lại chỉ
+`server.id`, hai header trên sẽ đóng băng theo tenant kết nối đầu tiên — đó là lỗi rò chéo tenant,
+không phải chuyện hiệu năng.
+
+Chiều dài tên tool: với slug `cluega`, tool tới runtime dưới dạng `mcp__cluega__<tên>`, giới hạn 64
+ký tự (`packages/adapters/src/pi-runtime.ts`). Sau khi gateway bật endpoint gộp, kiểm lại:
+
+    node scripts/pulse/probe-mcp.mjs http://127.0.0.1:5235/gateway/cluega/mcp \
+      | awk '{ n = length("mcp__cluega__" $1); if (n > 64) print n, $1 }'
+
+Không dòng nào in ra là đạt. Tên bị băm sẽ làm hỏng mọi luật phê duyệt khớp theo tên tool.
