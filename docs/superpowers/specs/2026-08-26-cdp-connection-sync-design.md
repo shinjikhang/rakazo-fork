@@ -62,9 +62,21 @@ báo ra, mà là danh sách rỗng.
 Nửa đầu **đã chứng minh** ngày 26/08: một workspace có `id` là tenant UUID của CDP gọi được
 `tiktok_get_business_centers` ra dữ liệu thật.
 
-**Giá phải trả:** kết nối Composio hiện có trong Rakazo nằm dưới entity id của better-auth
-(`MOLM47Qd…`). Đổi sang id của CDP làm chúng mồ côi và phải nối lại. Ít người dùng thì rẻ, nhưng
-không miễn phí, và phải nói trước với người dùng.
+**Giá phải trả — đã đo ngày 26/08, và nó rất nhỏ:** DB dev có 2 user và 4 hàng `connections`, trong
+đó **đúng một hàng `composio|connected`** (ba hàng còn lại đã `revoked`). Đổi id nghĩa là một lần nối
+lại. Không cần cột ánh xạ, không cần job di trú.
+
+**Vì sao không dùng cột ánh xạ `composioUserId`.** Nó hoà giải hai không gian tên, tức giữ sự nhập
+nhằng sống mãi: về sau mỗi lần đọc code đều phải hỏi "id này là id nào". Nó chỉ đúng nếu có hàng
+nghìn kết nối sống dưới id cũ, hoặc nếu Rakazo cần phục vụ người không tồn tại trong CDP — mà cái
+thứ hai đã bị loại bỏ có chủ đích (Rakazo không có đăng nhập). Cách triệt để là **bỏ đi việc Rakazo
+tự sinh danh tính**, không phải thêm một tầng dịch.
+
+**Biến bất biến này thành thứ không phá được.** `blockedAuthPaths`
+(`packages/auth/src/index.ts:144`) hiện chặn tạo tổ chức và mời thành viên nhưng **không chặn đăng
+ký**, nên vẫn có thể sinh ra một user id kiểu better-auth và bệnh quay lại. Thêm đường sign-up vào
+danh sách đó, cộng một chốt kiểm dạng id lúc khởi động (id CDP là UUID; id better-auth là chuỗi 32
+ký tự). Một quy tắc ghi trong spec sẽ trôi; một đường bị bịt thì không.
 
 ## 5. Hợp đồng
 
