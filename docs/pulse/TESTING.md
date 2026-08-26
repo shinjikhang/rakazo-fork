@@ -653,3 +653,31 @@ Kiểm danh tính: chạy `discoverTools` cho hai workspace rồi soi log gatewa
     grep -o '"X-Tenant-Id":"[^"]*"' <gateway.log> | sort | uniq -c
 
 Phải thấy đúng hai giá trị khác nhau, mỗi cái kèm `X-User-Id` riêng.
+
+## Vòng đồng bộ kết nối
+
+Worker kéo `GET /internal/v1/tenants` và `GET /internal/v1/tenants/{t}/connections` của CDP mỗi 5
+phút, rồi tạo một bot cho mỗi kết nối. Không chạy nếu thiếu `CDP_BASE_URL`,
+`CDP_INTERNAL_API_KEY` hoặc `CLUEGA_GATEWAY_MCP_URL`.
+
+Chạy tay một vòng để khỏi chờ:
+
+    node -e 'import("@rakazo/adapters").then(async (m) => {
+      const { createDb } = await import("@rakazo/db/client");
+      const { prisma } = createDb(process.env.DATABASE_URL);
+      const cdp = m.createCdpInventory({ baseUrl: process.env.CDP_BASE_URL, internalKey: process.env.CDP_INTERNAL_API_KEY });
+      console.log(await m.createConnectionSync({ prisma, cdp, gatewayMcpUrl: process.env.CLUEGA_GATEWAY_MCP_URL }).syncOnce());
+    })'
+
+Kiểm sau khi chạy:
+
+    select b.name, m."allowAllTools", jsonb_array_length(m."allowedTools")
+      from bot_mcp_servers m join bots b on b.id = m."botId";
+
+`allowAllTools` phải là `f` ở mọi hàng. Nếu thấy `t`, có ai đó cấp phát bằng tay — không phải vòng
+đồng bộ.
+
+**Hai điều dễ hiểu sai.** Bot của làn Composio là **nhãn hiển thị**, không phải ranh giới quyền:
+mọi bot của cùng một người đều thấy tool của mọi kết nối Composio của người đó (§6 của spec). Và
+`tenantsSkipped > 0` trong báo cáo nghĩa là CDP không trả lời cho tenant đó — đúng như thiết kế, vòng
+đồng bộ **không** thu hồi gì trong trường hợp đó.
