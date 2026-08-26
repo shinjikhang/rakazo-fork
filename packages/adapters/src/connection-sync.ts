@@ -7,6 +7,7 @@ export type SyncReport = {
   botsKept: number;
   toolsWithdrawn: number;
   tenantsSkipped: number;
+  connectionsFailed: number;
 };
 
 // Tools per platform, by the tool-name prefix on the merged gateway endpoint. Measured
@@ -51,121 +52,152 @@ export function createConnectionSync(
   const syncTenant = async (tenantId: string, report: SyncReport): Promise<void> => {
     const connections = await deps.cdp.listConnections(tenantId);
 
+    // Every ads connection of the same owner shares one mcp_servers row (they all point at
+    // the same aggregate gateway endpoint); mcp_servers has a unique (workspaceId, userId,
+    // slug) index, so a second row for the same owner would collide. Per-connection scoping
+    // lives in bot_mcp_servers instead. Used to decide, on a revoke, whether any *other*
+    // active ads connection of this owner still needs the shared server enabled.
+    const ownerHasActiveAds = (owner: string) =>
+      connections.some(
+        (c) => c.kind === "ads" && c.status === "active" && c.connectedByUserId === owner,
+      );
+    // Every active connection of the same owner would otherwise upsert the identical shared
+    // row again; track which owners this pass already wrote so only the first does.
+    const serverUpserted = new Set<string>();
+
     for (const connection of connections) {
-      const now = new Date();
-      const botId = `cdpbot_${connection.connectionId}`;
-      const serverId = `cdpmcp_${connection.connectionId}`;
-      const assignmentId = `cdpbms_${connection.connectionId}`;
-      const owner = connection.connectedByUserId;
+      try {
+        const now = new Date();
+        const botId = `cdpbot_${connection.connectionId}`;
+        const serverId = `cdpmcp_${tenantId}_${connection.connectedByUserId}`;
+        const assignmentId = `cdpbms_${connection.connectionId}`;
+        const owner = connection.connectedByUserId;
 
-      await deps.prisma.$transaction(async (tx) => {
-        await tx.organization.upsert({
-          where: { id: tenantId },
-          create: { id: tenantId, name: "CDP", slug: `cdp-${tenantId}`, createdAt: now },
-          update: {},
-        });
-        // email and name are NOT NULL on Rakazo's side; CDP has no way to look up an
-        // email by id, so we generate a value that can never collide. Rakazo has no
-        // sign-in page of its own for these accounts.
-        await tx.user.upsert({
-          where: { id: owner },
-          create: {
-            id: owner,
-            name: owner,
-            email: `${owner}@cdp.invalid`,
-            emailVerified: false,
-            createdAt: now,
-            updatedAt: now,
-          },
-          update: {},
-        });
-        await tx.member.upsert({
-          where: { id: `cdpmem_${tenantId}_${owner}` },
-          create: {
-            id: `cdpmem_${tenantId}_${owner}`,
-            organizationId: tenantId,
-            userId: owner,
-            role: "owner",
-            createdAt: now,
-          },
-          update: {},
-        });
-        await tx.bot.upsert({
-          where: { id: botId },
-          create: {
-            id: botId,
-            workspaceId: tenantId,
-            userId: owner,
-            name: botName(connection),
-            title: connection.key,
-            description: "",
-            instructions: "",
-            color: "#6A6BF5",
-            updatedAt: now,
-          },
-          update: {},
-        });
-
-        if (connection.kind !== "ads") {
-          // Composio lane: the connection already lives in the connections table and
-          // ComposioConnector discovers it on its own. The bot here is an organizing
-          // label, not a permission boundary.
-          return;
-        }
-
-        if (connection.status !== "active") {
-          await tx.mcpServer.update({
-            where: { id: serverId },
-            data: { enabled: false, revision: { increment: 1 }, updatedAt: now },
+        await deps.prisma.$transaction(async (tx) => {
+          await tx.organization.upsert({
+            where: { id: tenantId },
+            create: { id: tenantId, name: "CDP", slug: `cdp-${tenantId}`, createdAt: now },
+            update: {},
           });
-          await tx.botMcpServer.deleteMany({ where: { id: assignmentId } });
-          return;
-        }
+          // email and name are NOT NULL on Rakazo's side; CDP has no way to look up an
+          // email by id, so we generate a value that can never collide. Rakazo has no
+          // sign-in page of its own for these accounts.
+          await tx.user.upsert({
+            where: { id: owner },
+            create: {
+              id: owner,
+              name: owner,
+              email: `${owner}@cdp.invalid`,
+              emailVerified: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+            update: {},
+          });
+          await tx.member.upsert({
+            where: { id: `cdpmem_${tenantId}_${owner}` },
+            create: {
+              id: `cdpmem_${tenantId}_${owner}`,
+              organizationId: tenantId,
+              userId: owner,
+              role: "owner",
+              createdAt: now,
+            },
+            update: {},
+          });
+          await tx.bot.upsert({
+            where: { id: botId },
+            create: {
+              id: botId,
+              workspaceId: tenantId,
+              userId: owner,
+              name: botName(connection),
+              title: connection.key,
+              description: "",
+              instructions: "",
+              color: "#6A6BF5",
+              updatedAt: now,
+            },
+            update: {},
+          });
 
-        await tx.mcpServer.upsert({
-          where: { id: serverId },
-          create: {
-            id: serverId,
-            workspaceId: tenantId,
-            userId: owner,
-            slug: "cluega",
-            name: "Cluega MCP",
-            description: "",
-            transport: "streamable_http",
-            endpoint: deps.gatewayMcpUrl,
-            args: [],
-            env: {},
-            headers: {},
-            enabled: true,
-            revision: 1,
-            createdAt: now,
-            updatedAt: now,
-          },
-          update: { enabled: true, endpoint: deps.gatewayMcpUrl, updatedAt: now },
-        });
-        await tx.botMcpServer.upsert({
-          where: { id: assignmentId },
-          create: {
-            id: assignmentId,
-            workspaceId: tenantId,
-            botId,
-            serverId,
-            userId: owner,
-            allowAllTools: false,
-            allowedTools: allowedToolsFor(connection),
-            createdAt: now,
-            updatedAt: now,
-          },
-          update: {
-            allowAllTools: false,
-            allowedTools: allowedToolsFor(connection),
-            updatedAt: now,
-          },
-        });
-      });
+          if (connection.kind !== "ads") {
+            // Composio lane: the connection already lives in the connections table and
+            // ComposioConnector discovers it on its own. The bot here is an organizing
+            // label, not a permission boundary.
+            return;
+          }
 
-      if (connection.kind === "ads" && connection.status !== "active") report.toolsWithdrawn += 1;
-      else report.botsCreated += 1;
+          if (connection.status !== "active") {
+            // Withdraw only this connection's tool grant. The shared server row stays
+            // enabled if the owner has another active ads connection; only turn it off
+            // once nothing of theirs needs it. Bump revision either way so a cached MCP
+            // session for this owner drops the withdrawn tools (mcp-connector.ts:151).
+            await tx.botMcpServer.deleteMany({ where: { id: assignmentId } });
+            await tx.mcpServer.update({
+              where: { id: serverId },
+              data: {
+                revision: { increment: 1 },
+                updatedAt: now,
+                ...(ownerHasActiveAds(owner) ? {} : { enabled: false }),
+              },
+            });
+            return;
+          }
+
+          if (!serverUpserted.has(serverId)) {
+            await tx.mcpServer.upsert({
+              where: { id: serverId },
+              create: {
+                id: serverId,
+                workspaceId: tenantId,
+                userId: owner,
+                slug: "cluega",
+                name: "Cluega MCP",
+                description: "",
+                transport: "streamable_http",
+                endpoint: deps.gatewayMcpUrl,
+                args: [],
+                env: {},
+                headers: {},
+                enabled: true,
+                revision: 1,
+                createdAt: now,
+                updatedAt: now,
+              },
+              update: { enabled: true, endpoint: deps.gatewayMcpUrl, updatedAt: now },
+            });
+            serverUpserted.add(serverId);
+          }
+          await tx.botMcpServer.upsert({
+            where: { id: assignmentId },
+            create: {
+              id: assignmentId,
+              workspaceId: tenantId,
+              botId,
+              serverId,
+              userId: owner,
+              allowAllTools: false,
+              allowedTools: allowedToolsFor(connection),
+              createdAt: now,
+              updatedAt: now,
+            },
+            update: {
+              allowAllTools: false,
+              allowedTools: allowedToolsFor(connection),
+              updatedAt: now,
+            },
+          });
+        });
+
+        if (connection.kind === "ads" && connection.status !== "active") report.toolsWithdrawn += 1;
+        else report.botsCreated += 1;
+      } catch (error) {
+        // One connection's failure (a unique-constraint collision, a transient DB error)
+        // must not cost its siblings: count it and move on to the next connection.
+        report.connectionsFailed += 1;
+        console.error(`connection sync failed for connection ${connection.connectionId}:`, error);
+      }
     }
   };
 
@@ -178,6 +210,7 @@ export function createConnectionSync(
         botsKept: 0,
         toolsWithdrawn: 0,
         tenantsSkipped: 0,
+        connectionsFailed: 0,
       };
       const tenants = await deps.cdp.listTenants();
       report.tenants = tenants.length;

@@ -191,6 +191,87 @@ describe("connection sync", () => {
     expect(upserts.some((row) => row.table === "bot")).toBe(false);
   });
 
+  it("shares one mcp server row across two ads connections for the same owner", async () => {
+    cdp.listConnections = vi.fn(async () => [
+      adsConnection({ key: "tiktok", connectionId: "conn-1" }),
+      adsConnection({ key: "facebook", connectionId: "conn-2" }),
+    ]);
+    const { prisma, upserts } = fakePrisma();
+    const report = await createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    }).syncOnce();
+
+    expect(report.botsCreated).toBe(2);
+    expect(report.connectionsFailed).toBe(0);
+    const servers = upserts.filter((row) => row.table === "mcpServer");
+    expect(servers).toHaveLength(1);
+    expect(servers[0]?.id).toBe(`cdpmcp_${TENANT}_${OWNER}`);
+    const assignments = upserts.filter((row) => row.table === "botMcpServer");
+    expect(assignments).toHaveLength(2);
+    expect(new Set(assignments.map((row) => row.id)).size).toBe(2);
+  });
+
+  it("revoking one of two connections withdraws only that tool grant and keeps the shared server enabled", async () => {
+    cdp.listConnections = vi.fn(async () => [
+      adsConnection({ key: "tiktok", connectionId: "conn-1", status: "revoked" }),
+      adsConnection({ key: "facebook", connectionId: "conn-2", status: "active" }),
+    ]);
+    const { prisma, upserts } = fakePrisma();
+    const report = await createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    }).syncOnce();
+
+    expect(report.toolsWithdrawn).toBe(1);
+    expect(report.botsCreated).toBe(1);
+    const withdrawn = upserts.find(
+      (row) => row.table === "botMcpServer:deleteMany" && row.id.includes("conn-1"),
+    );
+    expect(withdrawn).toBeTruthy();
+    const disabled = upserts.find((row) => row.table === "mcpServer:update");
+    expect(disabled?.data.enabled).toBeUndefined();
+    expect(disabled?.data.revision).toEqual({ increment: 1 });
+  });
+
+  it("disables the shared server once the owner has no active ads connection left", async () => {
+    cdp.listConnections = vi.fn(async () => [adsConnection({ status: "revoked" })]);
+    const { prisma, upserts } = fakePrisma();
+    await createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    }).syncOnce();
+
+    const disabled = upserts.find((row) => row.table === "mcpServer:update");
+    expect(disabled?.data.enabled).toBe(false);
+  });
+
+  it("counts a per-connection failure without dropping the other connections of the tenant", async () => {
+    cdp.listConnections = vi.fn(async () => [
+      adsConnection({ connectionId: "conn-1" }),
+      adsConnection({ connectionId: "conn-2" }),
+    ]);
+    const { prisma, upserts } = fakePrisma();
+    const originalUpsert = prisma.bot.upsert;
+    prisma.bot.upsert = vi.fn(async (args: { where: { id: string } }) => {
+      if (args.where.id === "cdpbot_conn-1") throw new Error("boom");
+      return originalUpsert(args as never);
+    }) as never;
+
+    const report = await createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    }).syncOnce();
+
+    expect(report.connectionsFailed).toBe(1);
+    expect(report.botsCreated).toBe(1);
+    expect(upserts.some((row) => row.table === "bot" && row.id === "cdpbot_conn-2")).toBe(true);
+  });
+
   it("does not overlap two syncs", async () => {
     let inFlight = 0;
     let maxInFlight = 0;
