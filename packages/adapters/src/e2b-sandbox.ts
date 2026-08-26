@@ -79,10 +79,16 @@ export function isUnrecoverableSandboxError(error: unknown): boolean {
 
 export const E2B_BROWSER_APPS = ["google-chrome", "firefox", "chromium"] as const;
 
-export async function openDesktopBrowser(desktop: {
+type E2BDesktopBrowser = {
   launch: (application: string, uri?: string) => Promise<void>;
   open: (fileOrUrl: string) => Promise<void>;
-}): Promise<void> {
+};
+
+type E2BDesktopCommands = {
+  run: (cmd: string) => Promise<{ exitCode?: number }>;
+};
+
+export async function openDesktopBrowser(desktop: E2BDesktopBrowser): Promise<void> {
   for (const app of E2B_BROWSER_APPS) {
     try {
       await desktop.launch(app);
@@ -92,6 +98,25 @@ export async function openDesktopBrowser(desktop: {
     }
   }
   await desktop.open("https://www.google.com").catch(() => undefined);
+}
+
+/** Open an http(s) URL via a named browser — avoids the broken default-browser association. */
+export async function openDesktopUrl(
+  desktop: E2BDesktopBrowser & { commands: E2BDesktopCommands },
+  url: string,
+): Promise<void> {
+  for (const app of E2B_BROWSER_APPS) {
+    // Prefer a foreground gtk-launch so missing desktop entries / launch failures reject
+    // and we can try the next browser. desktop.launch backgrounds and always resolves.
+    const launched = await desktop.commands
+      .run(`gtk-launch ${shellQuote(app)} ${shellQuote(url)}`)
+      .then(
+        (result) => (result.exitCode ?? 0) === 0,
+        () => false,
+      );
+    if (launched) return;
+  }
+  await desktop.open(url);
 }
 
 export class E2BSandboxProvider implements SandboxProvider {
@@ -221,6 +246,7 @@ export class E2BSandboxProvider implements SandboxProvider {
     const desktop = await this.box(computer);
     if (computer.fresh) await desktop.files.makeDir(E2B_WORKSPACE);
     const profilesChanged = await configurePortableBrowserProfiles(desktop);
+    await configureDefaultWebBrowser(desktop);
     if (!computer.fresh && profilesChanged) await openDesktopBrowser(desktop);
   }
 
@@ -628,14 +654,22 @@ export class E2BSandboxProvider implements SandboxProvider {
     if (layout.isPrimary) {
       const passwordFile = "/tmp/rakazo-control.vncpass";
       const tokenFile = "/tmp/rakazo-control.token";
+      const vncPort = layout.controlVncPort;
+      const proxyPort = layout.controlPort;
       const command = [
         controlStreamStopCommand(),
+        // Old x11vnc may outlive pkill briefly; do not store a new password until the VNC port is free.
+        `for i in $(seq 1 50); do netstat -tuln | grep -q ':${vncPort} ' || break; sleep 0.1; done`,
+        `if netstat -tuln | grep -q ':${vncPort} '; then exit 1; fi`,
         `printf %s ${shellQuote(controlToken)} > ${tokenFile}`,
         `x11vnc -storepasswd ${shellQuote(password)} ${passwordFile} >/dev/null`,
-        `x11vnc -bg -display ${shellQuote(desktop.display)} -forever -wait 50 -shared -rfbport ${layout.controlVncPort} -rfbauth ${passwordFile} 2>/tmp/rakazo-control-x11vnc.log`,
+        `x11vnc -bg -display ${shellQuote(desktop.display)} -forever -wait 50 -shared -rfbport ${vncPort} -rfbauth ${passwordFile} 2>/tmp/rakazo-control-x11vnc.log`,
+        // Require the new x11vnc itself — proxy listen alone can pass with a leftover server.
+        `for i in $(seq 1 50); do netstat -tuln | grep -q ':${vncPort} ' && break; sleep 0.1; done`,
+        `if ! netstat -tuln | grep -q ':${vncPort} '; then exit 1; fi`,
         "cd /opt/noVNC/utils",
-        `(nohup ./novnc_proxy --vnc localhost:${layout.controlVncPort} --listen ${layout.controlPort} --web /opt/noVNC >/tmp/rakazo-control-novnc.log 2>&1 &)`,
-        `for i in $(seq 1 50); do netstat -tuln | grep -q ':${layout.controlPort} ' && exit 0; sleep 0.1; done`,
+        `(nohup ./novnc_proxy --vnc localhost:${vncPort} --listen ${proxyPort} --web /opt/noVNC >/tmp/rakazo-control-novnc.log 2>&1 &)`,
+        `for i in $(seq 1 50); do netstat -tuln | grep -q ':${proxyPort} ' && exit 0; sleep 0.1; done`,
         "exit 1",
       ].join(" && ");
       const result = await desktop.commands.run(command);
@@ -675,9 +709,13 @@ async function settleForTeardown(pending: Promise<void> | undefined): Promise<vo
 }
 
 function controlStreamStopCommand(controlToken?: string) {
+  // Anchor to the x11vnc binary (path-prefixed OK). Do not use an unanchored
+  // `x11vnc.*` pattern — E2B embeds the full script in the runner argv, so that
+  // would pkill the runner itself.
   const stop = [
-    "pkill -f '^x11vnc .* -rfbport 5901' || true",
+    "pkill -f '(^|/)x11vnc .* -rfbport 5901' || true",
     "pkill -f '^/usr/bin/python3 .*websockify.*6081' || true",
+    "pkill -f 'novnc_proxy.*--listen 6081' || true",
     "rm -f /tmp/rakazo-control.vncpass",
     "rm -f /tmp/rakazo-control.token",
   ].join("; ");
@@ -762,6 +800,20 @@ async function configurePortableBrowserProfiles(desktop: Sandbox): Promise<boole
   return true;
 }
 
+/** Point xdg-open / XFCE exo-open at Chrome. Lives outside the checkpointed workspace. */
+async function configureDefaultWebBrowser(desktop: Sandbox): Promise<void> {
+  await desktop.commands
+    .run(
+      [
+        "command -v google-chrome >/dev/null 2>&1 || exit 0",
+        'mkdir -p "$HOME/.config/xfce4"',
+        "printf 'WebBrowser=google-chrome\\n' > \"$HOME/.config/xfce4/helpers.rc\"",
+        "xdg-settings set default-web-browser google-chrome.desktop",
+      ].join(" && "),
+    )
+    .catch(() => undefined);
+}
+
 async function stopDesktopBrowsers(desktop: Sandbox): Promise<void> {
   await desktop.commands.run(PORTABLE_BROWSER_STOP_COMMAND).catch(() => undefined);
 }
@@ -799,10 +851,11 @@ async function applyE2BAction(desktop: Sandbox, action: ComputerAction): Promise
     return;
   }
   if (action.kind === "open") {
-    const value = /^https?:\/\//i.test(action.path)
-      ? action.path
-      : workspacePath(E2B_WORKSPACE, action.path);
-    await desktop.open(value);
+    if (/^https?:\/\//i.test(action.path)) {
+      await openDesktopUrl(desktop, action.path);
+      return;
+    }
+    await desktop.open(workspacePath(E2B_WORKSPACE, action.path));
     return;
   }
   await desktop.launch(action.application, action.uri);

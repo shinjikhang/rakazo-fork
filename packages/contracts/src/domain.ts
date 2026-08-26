@@ -9,6 +9,17 @@ export type ComputerMode = z.infer<typeof ComputerModeSchema>;
 export const MemoryScopeSchema = z.enum(["isolated", "shared"]);
 export type MemoryScopeValue = z.infer<typeof MemoryScopeSchema>;
 
+export const ThinkingLevelSchema = z.enum([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
+
 export const BotSchema = z.object({
   id: Id,
   workspaceId: Id,
@@ -32,6 +43,9 @@ export const BotSchema = z.object({
   createdAt: z.string(),
   voiceId: z.string().nullable(),
   autoSpeak: z.boolean(),
+  modelProvider: z.string().nullable(),
+  modelId: z.string().nullable(),
+  thinkingLevel: ThinkingLevelSchema.nullable(),
 });
 export type Bot = z.infer<typeof BotSchema>;
 
@@ -120,27 +134,55 @@ export function normalizeCreateBotProfile(
   };
 }
 
-export const UpdateBotInput = z.object({
-  botId: Id,
-  name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH).optional(),
-  title: z.string().max(BOT_TITLE_MAX_LENGTH).optional(),
-  description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).optional(),
-  instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).optional(),
-  notifyOnFinish: z.boolean().optional(),
-  color: z.string().optional(),
-  pinned: z.boolean().optional(),
-  memoryScope: MemoryScopeSchema.nullable().optional(),
-  sectionId: Id.nullable().optional(),
-  voiceId: z.string().max(120).nullable().optional(),
-  autoSpeak: z.boolean().optional(),
-});
+export const UpdateBotInput = z
+  .object({
+    botId: Id,
+    name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH).optional(),
+    title: z.string().max(BOT_TITLE_MAX_LENGTH).optional(),
+    description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).optional(),
+    instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).optional(),
+    notifyOnFinish: z.boolean().optional(),
+    color: z.string().optional(),
+    pinned: z.boolean().optional(),
+    memoryScope: MemoryScopeSchema.nullable().optional(),
+    sectionId: Id.nullable().optional(),
+    voiceId: z.string().max(120).nullable().optional(),
+    autoSpeak: z.boolean().optional(),
+    modelProvider: z.string().trim().min(1).max(80).nullable().optional(),
+    modelId: z.string().trim().min(1).max(200).nullable().optional(),
+    thinkingLevel: ThinkingLevelSchema.nullable().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const providerProvided = value.modelProvider !== undefined;
+    const modelProvided = value.modelId !== undefined;
+    if (!providerProvided && !modelProvided) return;
+    // Reject partial shapes like `{ modelId: null }` (provider omitted) so a
+    // clear cannot succeed without updating both persisted fields.
+    if (providerProvided !== modelProvided) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Model provider and model id must both be set or both cleared",
+        path: ["modelId"],
+      });
+      return;
+    }
+    const bothNull = value.modelProvider === null && value.modelId === null;
+    const bothSet = Boolean(value.modelProvider) && Boolean(value.modelId);
+    if (!bothNull && !bothSet) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Model provider and model id must both be set or both cleared",
+        path: ["modelId"],
+      });
+    }
+  });
 
 export const RoutineSchema = z.object({
   id: Id,
   botId: Id,
   name: z.string(),
   prompt: z.string(),
-  cron: z.string(),
+  crons: z.array(z.string()).min(1),
   timezone: z.string(),
   active: z.boolean(),
   notify: z.boolean(),
@@ -154,10 +196,31 @@ export const CreateRoutineInput = z.object({
   botId: Id,
   name: z.string().min(1).max(80),
   prompt: z.string().min(1),
-  cron: z.string().min(1),
+  crons: z.array(z.string().min(1)).min(1),
   timezone: z.string().default("UTC"),
   notify: z.boolean().default(true),
   active: z.boolean().default(false),
+});
+
+export const ScratchpadItemStatusSchema = z.enum(["open", "parked", "done"]);
+export type ScratchpadItemStatus = z.infer<typeof ScratchpadItemStatusSchema>;
+
+export const ScratchpadItemSchema = z.object({
+  id: Id,
+  botId: Id,
+  title: z.string(),
+  status: ScratchpadItemStatusSchema,
+  notes: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ScratchpadItem = z.infer<typeof ScratchpadItemSchema>;
+
+export const CreateScratchpadItemInput = z.object({
+  botId: Id,
+  title: z.string().min(1).max(200),
+  status: ScratchpadItemStatusSchema.default("open"),
+  notes: z.string().max(4_000).default(""),
 });
 
 export const TaughtSkillStatusSchema = z.enum(["recording", "drafting", "draft", "saved"]);
@@ -216,6 +279,71 @@ export const TaughtSkillSchema = z.object({
   updatedAt: z.string(),
 });
 export type TaughtSkill = z.infer<typeof TaughtSkillSchema>;
+
+export const AgentSkillSourceSchema = z.enum(["user", "builtin", "plugin"]);
+export type AgentSkillSource = z.infer<typeof AgentSkillSourceSchema>;
+
+export const AgentSkillSchema = z.object({
+  id: Id,
+  name: z.string(),
+  description: z.string(),
+  content: z.string(),
+  source: AgentSkillSourceSchema,
+  readOnly: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AgentSkill = z.infer<typeof AgentSkillSchema>;
+
+export const AgentSkillCatalogEntrySchema = AgentSkillSchema.pick({
+  id: true,
+  name: true,
+  description: true,
+  source: true,
+  readOnly: true,
+});
+export type AgentSkillCatalogEntry = z.infer<typeof AgentSkillCatalogEntrySchema>;
+
+export const CreateAgentSkillInput = z
+  .object({
+    content: z.string().min(1).max(100_000).optional(),
+    name: z.string().min(1).max(80).optional(),
+    description: z.string().min(1).max(2000).optional(),
+    body: z.string().max(100_000).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.content?.trim()) return;
+    if (!input.name?.trim() || !input.description?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide content (SKILL.md) or name + description (+ optional body)",
+        path: ["content"],
+      });
+    }
+  });
+
+export const UpdateAgentSkillInput = z
+  .object({
+    skillId: Id,
+    content: z.string().min(1).max(100_000).optional(),
+    name: z.string().min(1).max(80).optional(),
+    description: z.string().min(1).max(2000).optional(),
+    body: z.string().max(100_000).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (
+      input.content === undefined &&
+      input.name === undefined &&
+      input.description === undefined &&
+      input.body === undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide at least one field to update",
+        path: ["content"],
+      });
+    }
+  });
 
 export const MemoryDocumentSchema = z.object({
   id: Id,
@@ -397,11 +525,13 @@ export const RunSchema = z.object({
   taskId: Id,
   status: RunStatus,
   trigger: z.enum(["user", "routine", "resume", "follow_up", "spawn", "skill"]),
+  routineId: Id.nullable(),
   modelProvider: z.string().nullable(),
   modelId: z.string().nullable(),
   error: z.string().nullable(),
   startedAt: z.string().nullable(),
   completedAt: z.string().nullable(),
+  createdAt: z.string(),
 });
 export type Run = z.infer<typeof RunSchema>;
 
@@ -517,6 +647,10 @@ export const ModelCatalogEntrySchema = z.object({
   authHint: z.string().optional(),
   subscription: z.boolean().optional(),
   signIn: ModelOAuthSignInModeSchema.optional(),
+  reasoning: z.boolean().optional(),
+  thinkingLevels: z.array(ThinkingLevelSchema).optional(),
+  /** Catalog stand-in so a provider appears before the user enters a real model id. */
+  placeholder: z.boolean().optional(),
 });
 export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
 
@@ -675,7 +809,7 @@ export const ExportManifestSchema = z.object({
   exportedAt: z.string(),
   bot: BotSchema.pick({ name: true, title: true, description: true, instructions: true }),
   memory: z.array(z.object({ path: z.string(), content: z.string() })),
-  routines: z.array(RoutineSchema.pick({ name: true, prompt: true, cron: true, timezone: true })),
+  routines: z.array(RoutineSchema.pick({ name: true, prompt: true, crons: true, timezone: true })),
   files: z.array(z.object({ path: z.string(), content: z.string() })),
   history: z.array(ThreadMessageSchema),
 });

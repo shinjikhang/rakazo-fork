@@ -8,6 +8,10 @@ import {
   signup,
 } from "./helpers";
 
+function sidebarBotButton(page: Page, name: RegExp | string) {
+  return page.locator("[data-sidebar-group]").getByRole("button", { name });
+}
+
 test.describe.configure({ mode: "serial" });
 
 test("two users are isolated and a bot completes durable work", async ({ browser }, testInfo) => {
@@ -91,7 +95,16 @@ test("takeover, routine, plugins, and export are reachable", async ({ page }, te
       message: "the second protected-input run must be ready for takeover",
     })
     .toBe("waiting_takeover");
-  await page.getByRole("button", { name: "Take control" }).click();
+  // Agent computer toggles the panel — only open it when closed so we don't hide Take control.
+  // Opening refreshes thread/computer status so Take control can clear a stale busyBotName.
+  if ((await sidePanel.getAttribute("data-panel")) === "computer") {
+    await page.getByTitle("Agent computer").click();
+  }
+  await page.getByTitle("Agent computer").click();
+  await expect(sidePanel).toHaveAttribute("data-panel", "computer");
+  const takeControl = sidePanel.getByRole("button", { name: "Take control" });
+  await expect(takeControl).toBeEnabled({ timeout: 30_000 });
+  await takeControl.click();
   await expect(page.getByRole("button", { name: "Close computer" })).toBeVisible();
   await page.getByRole("button", { name: "Skip", exact: true }).last().click();
   await expect(page.getByRole("button", { name: "Close computer" })).toBeHidden();
@@ -204,13 +217,13 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
   const composer = page.getByPlaceholder(/Message/);
   await composer.fill("spawn a bot named Scout to research venues");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("complementary").getByRole("button", { name: /Scout/ })).toBeVisible({
+  await expect(sidebarBotButton(page, /Scout/)).toBeVisible({
     timeout: 30_000,
   });
   await captureScreenshot(page, testInfo, "13-spawned-bot");
 
   await page
-    .getByRole("complementary")
+    .locator("[data-sidebar-group]")
     .getByRole("button", { name: /^Chief/ })
     .click();
   await composer.fill("keep working until I stop you");
@@ -226,12 +239,8 @@ test("sign-in, spawn, and stop work in the shell", async ({ page }, testInfo) =>
   await page.getByPlaceholder("Password").fill("password12");
   await page.getByRole("button", { name: "Continue with email" }).click();
   await page.waitForURL(/\/app/, { timeout: 20_000 });
-  await expect(
-    page.getByRole("complementary").getByRole("button", { name: /^Chief/ }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("complementary").getByRole("button", { name: /Scout/ }),
-  ).toBeVisible();
+  await expect(sidebarBotButton(page, /^Chief/)).toBeVisible();
+  await expect(sidebarBotButton(page, /Scout/)).toBeVisible();
   await captureScreenshot(page, testInfo, "15-restored-session");
 });
 

@@ -4,6 +4,12 @@ import path from "node:path";
 import type { DesktopReachability, DesktopSetup } from "@rakazo/contracts";
 import { app, BrowserWindow, ipcMain, Menu, net, type Session, session, shell } from "electron";
 import {
+  DesktopUpdateController,
+  type ElectronAutoUpdater,
+  LAUNCH_CHECK_DELAY_MS,
+} from "./auto-update.js";
+import { oauthCallbackFrom } from "./oauth-callback.js";
+import {
   bundledRendererCandidates,
   contentType,
   forwardedRendererRequestInit,
@@ -41,6 +47,17 @@ let quitting = false;
 let warmWindowTimer: NodeJS.Timeout | undefined;
 const WARM_WINDOW_TTL_MS = warmWindowTtlMs(process.env.RAKAZO_WARM_WINDOW_TTL_MS);
 
+const updaterEnvironment = {
+  packaged: app.isPackaged,
+  version: app.getVersion(),
+  disabled: process.env.RAKAZO_DISABLE_AUTO_UPDATE === "1",
+};
+const desktopUpdater = new DesktopUpdateController(updaterEnvironment, async () => {
+  const module = await import("electron-updater");
+  return (module.default ?? module).autoUpdater as unknown as ElectronAutoUpdater;
+});
+let launchUpdateCheckScheduled = false;
+
 markOnce("rk:main:module-evaluated");
 if (PERFORMANCE_USER_DATA) {
   app.setPath("userData", PERFORMANCE_USER_DATA);
@@ -55,6 +72,10 @@ function markOnce(name: string) {
 
 function windowFrom(event: Electron.IpcMainInvokeEvent) {
   return BrowserWindow.fromWebContents(event.sender);
+}
+
+function fromMainWindow(event: Electron.IpcMainInvokeEvent) {
+  return mainWindow !== null && windowFrom(event) === mainWindow;
 }
 
 function developmentIcon() {
@@ -177,6 +198,8 @@ function createWindow(url: string, partition: string | null) {
   // OAuth flows open the provider's authorize page via window.open; give that
   // popup a normal framed window. Non-http(s) targets stay closed; other http(s)
   // origins open in the system browser so a connected server cannot navigate us away.
+  // Hoisted for loopback OAuth capture so MCP/in-app localhost callbacks are skipped.
+  const appOrigin = targetOrigin ?? safeOrigin(url);
   win.webContents.setWindowOpenHandler(({ url: childUrl }) => {
     let target: URL;
     try {
@@ -184,7 +207,6 @@ function createWindow(url: string, partition: string | null) {
     } catch {
       return { action: "deny" };
     }
-    const appOrigin = targetOrigin ?? safeOrigin(url);
     const sameOrigin = appOrigin !== null && target.origin === appOrigin;
     // Same-origin http(s) and third-party https (OAuth) get a framed popup.
     if (
@@ -203,6 +225,28 @@ function createWindow(url: string, partition: string | null) {
   win.webContents.on("will-navigate", (event, navigationUrl) => {
     if (targetOrigin !== null && safeOrigin(navigationUrl) === targetOrigin) return;
     event.preventDefault();
+  });
+  // The popup has no address bar, so a loopback redirect would otherwise strand
+  // the user on a blank window holding the authorization code in a URL they
+  // cannot read. Capture it here and hand it to the app instead.
+  win.webContents.on("did-create-window", (popup) => {
+    const capture = (details: {
+      preventDefault: () => void;
+      url: string;
+      isMainFrame?: boolean;
+    }) => {
+      // will-redirect can fire for iframes; only the top-level callback counts.
+      if (details.isMainFrame === false) return;
+      const callback = oauthCallbackFrom(details.url, {
+        excludeOrigins: appOrigin !== null ? [appOrigin] : [],
+      });
+      if (!callback) return;
+      details.preventDefault();
+      if (!win.isDestroyed()) win.webContents.send("desktop.oauth.callback", callback);
+      if (!popup.isDestroyed()) popup.close();
+    };
+    popup.webContents.on("will-redirect", (details) => capture(details));
+    popup.webContents.on("will-navigate", (details) => capture(details));
   });
   win.on("close", (event) => {
     if (
@@ -237,6 +281,10 @@ function createWindow(url: string, partition: string | null) {
       throw error;
     },
   );
+  if (!launchUpdateCheckScheduled) {
+    launchUpdateCheckScheduled = true;
+    setTimeout(() => void desktopUpdater.check(false), LAUNCH_CHECK_DELAY_MS).unref();
+  }
   return { loaded, win };
 }
 
@@ -835,6 +883,24 @@ app.whenReady().then(async () => {
       maximized: win?.isMaximized() ?? false,
       fullScreen: win?.isFullScreen() ?? false,
     };
+  });
+  ipcMain.handle("desktop.update.state", () => desktopUpdater.state());
+  ipcMain.handle("desktop.update.check", (event) =>
+    fromMainWindow(event) ? desktopUpdater.check(true) : desktopUpdater.state(),
+  );
+  ipcMain.handle("desktop.update.download", (event) =>
+    fromMainWindow(event) ? desktopUpdater.download() : desktopUpdater.state(),
+  );
+  ipcMain.handle("desktop.update.install", async (event) => {
+    if (!fromMainWindow(event) || desktopUpdater.state().phase !== "ready") {
+      return desktopUpdater.state();
+    }
+    quitting = true;
+    const state = await desktopUpdater.install();
+    // Install failures leave ready via installFailed; also clear quitting if still ready
+    // is no longer true for any other reason.
+    if (state.phase !== "ready") quitting = false;
+    return state;
   });
   ipcMain.handle("desktop.setup.state", (event) => {
     if (!fromSetupWindow(event)) return null;

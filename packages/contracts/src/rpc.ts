@@ -3,6 +3,8 @@ import * as z from "zod";
 import { ATTACHMENT_MAX_BASE64_LENGTH, ATTACHMENT_MAX_COUNT } from "./attachments.js";
 import {
   ActionApprovalRuleSchema,
+  AgentSkillCatalogEntrySchema,
+  AgentSkillSchema,
   AppBootstrapSchema,
   ArtifactSchema,
   ArtifactWithContentSchema,
@@ -15,12 +17,13 @@ import {
   ComputerStatusSchema,
   ConnectionCatalogItemSchema,
   ConnectionSchema,
+  CreateAgentSkillInput,
   CreateBotInput,
   CreateGroupInput,
   CreateRoutineInput,
+  CreateScratchpadItemInput,
   DeploymentSettingsSchema,
   ExportManifestSchema,
-  GROUP_MEMBER_MAX,
   GroupDetailSchema,
   GroupSchema,
   McpServerConfigInput,
@@ -33,11 +36,14 @@ import {
   ModelCredentialSchema,
   ModelOAuthBeginSchema,
   RoutineSchema,
+  ScratchpadItemSchema,
+  ScratchpadItemStatusSchema,
   SkillPlaybookSchema,
   TaughtSkillSchema,
   TeachRecordingEventSchema,
   ThreadMessagePageSchema,
   ThreadSnapshotSchema,
+  UpdateAgentSkillInput,
   UpdateBotInput,
   UpdateGroupInput,
   UsageRecordSchema,
@@ -49,6 +55,7 @@ import {
 } from "./domain.js";
 import { ProductEventSchema } from "./events.js";
 import { Id } from "./ids.js";
+import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 
 const botId = z.object({ botId: Id });
@@ -71,11 +78,22 @@ const threadTarget = z
     }
   });
 
+const structuredMentionTarget = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("bot"), id: Id }),
+  z.object({ kind: z.literal("group"), id: Id }),
+  z.object({ kind: z.literal("routine"), id: Id }),
+  z.object({ kind: z.literal("connector"), id: Id }),
+]);
+
 const threadSendInput = threadTarget
   .safeExtend({
     text: z.string().optional(),
     artifactIds: z.array(Id).max(ATTACHMENT_MAX_COUNT).optional(),
-    mentions: z.array(Id).max(GROUP_MEMBER_MAX).optional(),
+    /** Bare bot ids (legacy) or typed mention chips from the composer. */
+    mentions: z
+      .array(z.union([Id, structuredMentionTarget]))
+      .max(64)
+      .optional(),
     replyToMessageId: Id.optional(),
     clientNonce: z.string().min(1).max(200).optional(),
   })
@@ -284,7 +302,7 @@ export const appContract = {
           routineId: Id,
           name: z.string().optional(),
           prompt: z.string().optional(),
-          cron: z.string().optional(),
+          crons: z.array(z.string().min(1)).min(1).optional(),
           timezone: z.string().optional(),
           active: z.boolean().optional(),
           notify: z.boolean().optional(),
@@ -292,7 +310,37 @@ export const appContract = {
       )
       .output(RoutineSchema),
     remove: oc.input(z.object({ routineId: Id })).output(z.object({ ok: z.literal(true) })),
-    testRun: oc.input(z.object({ routineId: Id })).output(z.object({ runId: Id })),
+    testRun: oc
+      .input(
+        z.object({
+          routineId: Id,
+          clientNonce: z.string().min(1).max(200).optional(),
+        }),
+      )
+      .output(z.object({ runId: Id })),
+  },
+  scratchpad: {
+    list: oc
+      .input(
+        z.object({
+          botId: Id,
+          status: ScratchpadItemStatusSchema.optional(),
+          includeDone: z.boolean().optional(),
+        }),
+      )
+      .output(z.array(ScratchpadItemSchema)),
+    create: oc.input(CreateScratchpadItemInput).output(ScratchpadItemSchema),
+    update: oc
+      .input(
+        z.object({
+          itemId: Id,
+          title: z.string().min(1).max(200).optional(),
+          status: ScratchpadItemStatusSchema.optional(),
+          notes: z.string().max(4_000).optional(),
+        }),
+      )
+      .output(ScratchpadItemSchema),
+    remove: oc.input(z.object({ itemId: Id })).output(z.object({ ok: z.literal(true) })),
   },
   skills: {
     list: oc.input(botId).output(z.array(TaughtSkillSchema)),
@@ -320,6 +368,28 @@ export const appContract = {
     testRun: oc
       .input(z.object({ skillId: Id, prompt: z.string().optional() }))
       .output(z.object({ runId: Id })),
+    remove: oc.input(z.object({ skillId: Id })).output(z.object({ ok: z.literal(true) })),
+  },
+  /** Claude Agent Skills (SKILL.md recipes) shared across assistants (not taught/demo skills). Pi already understands this format; we persist and inject them. */
+  agentSkills: {
+    list: oc.output(z.array(AgentSkillCatalogEntrySchema)),
+    get: oc
+      .input(
+        z
+          .object({ skillId: Id.optional(), name: z.string().min(1).max(80).optional() })
+          .superRefine((input, ctx) => {
+            if (!input.skillId && !input.name?.trim()) {
+              ctx.addIssue({
+                code: "custom",
+                message: "Provide skillId or name",
+                path: ["skillId"],
+              });
+            }
+          }),
+      )
+      .output(AgentSkillSchema),
+    create: oc.input(CreateAgentSkillInput).output(AgentSkillSchema),
+    update: oc.input(UpdateAgentSkillInput).output(AgentSkillSchema),
     remove: oc.input(z.object({ skillId: Id })).output(z.object({ ok: z.literal(true) })),
   },
   capabilities: {
@@ -461,6 +531,9 @@ export const appContract = {
   },
   search: {
     query: oc.input(z.object({ q: z.string().max(200) })).output(SearchQueryOutputSchema),
+  },
+  runs: {
+    list: oc.input(z.object({ filter: z.enum(["active", "recent"]) })).output(RunsListOutputSchema),
   },
   voice: {
     catalog: oc.output(z.array(VoiceCatalogEntrySchema)),

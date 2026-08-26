@@ -18,7 +18,7 @@ describe("createRunExecutor", () => {
           botId: "bot-1",
           userId: "user-1",
           prompt: "say hi",
-          cron: ONCE_ROUTINE_CRON,
+          crons: [ONCE_ROUTINE_CRON],
           timezone: "UTC",
           active: true,
           nextRunAt: scheduledAt,
@@ -29,6 +29,9 @@ describe("createRunExecutor", () => {
           id: "bot-1",
           thread: { id: "thread-1" },
         })),
+      },
+      agentSkill: {
+        findMany: vi.fn(async () => []),
       },
       $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
         callback({
@@ -59,6 +62,73 @@ describe("createRunExecutor", () => {
     );
   });
 
+  it("expands @skill mentions in the routine prompt at fire time", async () => {
+    const scheduledAt = new Date(Date.now() - 1_000);
+    const enqueue = vi.fn(async () => undefined);
+    let createdPrompt = "";
+    const taskCreate = vi.fn(async (args: { data: { prompt: string } }) => {
+      createdPrompt = args.data.prompt;
+      return { id: "task-1" };
+    });
+    const skillContent = `---
+name: Daily standup
+description: Prepare standup notes
+---
+
+1. Summarize wins.
+`;
+    const prisma = {
+      routine: {
+        findUnique: vi.fn(async () => ({
+          id: "routine-1",
+          workspaceId: "ws-1",
+          botId: "bot-1",
+          userId: "user-1",
+          prompt: "Run @Daily standup, then email me",
+          crons: [ONCE_ROUTINE_CRON],
+          timezone: "UTC",
+          active: true,
+          nextRunAt: scheduledAt,
+        })),
+      },
+      bot: {
+        findUnique: vi.fn(async () => ({
+          id: "bot-1",
+          thread: { id: "thread-1" },
+        })),
+      },
+      agentSkill: {
+        findMany: vi.fn(async () => [
+          {
+            id: "skill-1",
+            name: "Daily standup",
+            description: "Prepare standup notes",
+            content: skillContent,
+            source: "user",
+          },
+        ]),
+      },
+      $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          routine: { updateMany: vi.fn(async () => ({ count: 1 })) },
+          task: { create: taskCreate },
+          run: { create: vi.fn(async () => ({ id: "run-1" })) },
+        }),
+      ),
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({
+      prisma,
+      jobs: { enqueue, cancel: vi.fn(async () => undefined), close: vi.fn(async () => undefined) },
+      events: { append: vi.fn(async () => undefined) },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
+
+    await executor.wakeRoutine("routine-1", scheduledAt.toISOString());
+
+    expect(createdPrompt).toContain("Use skill: Daily standup");
+    expect(createdPrompt).toContain("Summarize wins");
+    expect(createdPrompt).not.toMatch(/@Daily standup/);
+  });
+
   it("still continues the run when routine.fired append fails", async () => {
     const scheduledAt = new Date(Date.now() - 1_000);
     const enqueue = vi.fn(async () => undefined);
@@ -75,7 +145,7 @@ describe("createRunExecutor", () => {
           botId: "bot-1",
           userId: "user-1",
           prompt: "say hi",
-          cron: ONCE_ROUTINE_CRON,
+          crons: [ONCE_ROUTINE_CRON],
           timezone: "UTC",
           active: true,
           nextRunAt: scheduledAt,
@@ -87,6 +157,9 @@ describe("createRunExecutor", () => {
           id: "bot-1",
           thread: { id: "thread-1" },
         })),
+      },
+      agentSkill: {
+        findMany: vi.fn(async () => []),
       },
       $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
         callback({
@@ -128,7 +201,7 @@ describe("createRunExecutor", () => {
           botId: "bot-1",
           userId: "user-1",
           prompt: "say hi",
-          cron: ONCE_ROUTINE_CRON,
+          crons: [ONCE_ROUTINE_CRON],
           timezone: "UTC",
           active: true,
           nextRunAt: scheduledAt,
@@ -140,6 +213,9 @@ describe("createRunExecutor", () => {
           id: "bot-1",
           thread: { id: "thread-1" },
         })),
+      },
+      agentSkill: {
+        findMany: vi.fn(async () => []),
       },
       $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
         transactionCalls += 1;
@@ -242,5 +318,161 @@ describe("createRunExecutor", () => {
       }),
     );
     expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("resolves a per-bot model override with that provider’s credential", async () => {
+    const findFirst = vi.fn(async (args: { where: { provider?: string; isDefault?: boolean } }) => {
+      if (args.where.provider === "xai") {
+        return {
+          id: "cred-xai",
+          provider: "xai",
+          secretId: "secret-xai",
+          defaultModel: "grok-4.6",
+          isDefault: false,
+        };
+      }
+      if (args.where.isDefault) {
+        return {
+          id: "cred-default",
+          provider: "openrouter",
+          secretId: "secret-or",
+          defaultModel: "deepseek/deepseek-v4-flash-0731",
+          isDefault: true,
+        };
+      }
+      return null;
+    });
+    const prisma = {
+      bot: {
+        findFirst: vi.fn(async () => ({
+          modelProvider: "xai",
+          modelId: "grok-4.6",
+          thinkingLevel: "high",
+        })),
+      },
+      userModelCredential: { findFirst },
+      deploymentSettings: { findUnique: vi.fn(async () => null) },
+      secret: { findUnique: vi.fn(async () => null) },
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({
+      prisma,
+      secretStore: { load: vi.fn(), put: vi.fn() },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
+
+    const model = await executor.resolveModel({
+      userId: "user-1",
+      workspaceId: "ws-1",
+      botId: "bot-1",
+    });
+
+    expect(model).toMatchObject({
+      provider: "xai",
+      id: "grok-4.6",
+      thinkingLevel: "high",
+    });
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ provider: "xai" }),
+      }),
+    );
+  });
+
+  it("falls back to the workspace default when the override provider has no credential", async () => {
+    const findFirst = vi.fn(async (args: { where: { provider?: string; isDefault?: boolean } }) => {
+      if (args.where.provider === "xai") return null;
+      if (args.where.isDefault) {
+        return {
+          id: "cred-default",
+          provider: "openrouter",
+          secretId: "secret-or",
+          defaultModel: "deepseek/deepseek-v4-flash-0731",
+          isDefault: true,
+        };
+      }
+      return null;
+    });
+    const prisma = {
+      bot: {
+        findFirst: vi.fn(async () => ({
+          modelProvider: "xai",
+          modelId: "grok-4.6",
+          thinkingLevel: "high",
+        })),
+      },
+      userModelCredential: { findFirst },
+      deploymentSettings: { findUnique: vi.fn(async () => null) },
+      secret: { findUnique: vi.fn(async () => null) },
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({
+      prisma,
+      secretStore: { load: vi.fn(), put: vi.fn() },
+      deploymentModelKey: "deployment-openrouter-key",
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
+
+    const model = await executor.resolveModel({
+      userId: "user-1",
+      workspaceId: "ws-1",
+      botId: "bot-1",
+    });
+
+    expect(model).toMatchObject({
+      provider: "openrouter",
+      id: "deepseek/deepseek-v4-flash-0731",
+      // Override thinking must drop with the override provider/credential unit.
+      thinkingLevel: null,
+    });
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ provider: "xai" }),
+      }),
+    );
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ isDefault: true }),
+      }),
+    );
+  });
+
+  it("keeps per-bot thinking when using the workspace default model", async () => {
+    const findFirst = vi.fn(async (args: { where: { provider?: string; isDefault?: boolean } }) => {
+      if (args.where.isDefault) {
+        return {
+          id: "cred-default",
+          provider: "openrouter",
+          secretId: "secret-or",
+          defaultModel: "deepseek/deepseek-v4-flash-0731",
+          isDefault: true,
+        };
+      }
+      return null;
+    });
+    const prisma = {
+      bot: {
+        findFirst: vi.fn(async () => ({
+          modelProvider: null,
+          modelId: null,
+          thinkingLevel: "high",
+        })),
+      },
+      userModelCredential: { findFirst },
+      deploymentSettings: { findUnique: vi.fn(async () => null) },
+      secret: { findUnique: vi.fn(async () => null) },
+    } as unknown as PrismaClient;
+    const executor = createRunExecutor({
+      prisma,
+      secretStore: { load: vi.fn(), put: vi.fn() },
+    } as unknown as Parameters<typeof createRunExecutor>[0]);
+
+    const model = await executor.resolveModel({
+      userId: "user-1",
+      workspaceId: "ws-1",
+      botId: "bot-1",
+    });
+
+    expect(model).toMatchObject({
+      provider: "openrouter",
+      id: "deepseek/deepseek-v4-flash-0731",
+      thinkingLevel: "high",
+    });
   });
 });

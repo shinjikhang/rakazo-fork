@@ -48,6 +48,51 @@ export type ThreadTarget =
 const THREAD_MESSAGE_PAGE_SIZE = 100;
 const RUNS_NEEDING_CONTINUE = new Set(["queued"]);
 
+type MentionTargetInput = string | { kind: "bot" | "group" | "routine" | "connector"; id: string };
+
+function splitMentionTargets(mentions: MentionTargetInput[] | undefined) {
+  const botMentionIds = new Set<string>();
+  const groupMentionIds = new Set<string>();
+  const routineMentionIds = new Set<string>();
+  const connectorMentionIds = new Set<string>();
+  for (const mention of mentions ?? []) {
+    if (typeof mention === "string") {
+      botMentionIds.add(mention);
+      continue;
+    }
+    if (mention.kind === "bot") botMentionIds.add(mention.id);
+    if (mention.kind === "group") groupMentionIds.add(mention.id);
+    if (mention.kind === "routine") routineMentionIds.add(mention.id);
+    if (mention.kind === "connector") connectorMentionIds.add(mention.id);
+  }
+  return {
+    botMentionIds: [...botMentionIds],
+    groupMentionIds: [...groupMentionIds],
+    routineMentionIds: [...routineMentionIds],
+    connectorMentionIds: [...connectorMentionIds],
+  };
+}
+
+async function resolveOwnedConnectorDisplayNames(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  connectionIds: string[],
+) {
+  if (!connectionIds.length) return [];
+  const rows = await tx.connection.findMany({
+    where: {
+      id: { in: connectionIds },
+      workspaceId: actor.workspaceId,
+      userId: actor.userId,
+      status: "connected",
+    },
+    select: { id: true, displayName: true },
+  });
+  if (rows.length !== connectionIds.length) throw new IsolationError();
+  const byId = new Map(rows.map((row) => [row.id, row.displayName]));
+  return connectionIds.map((id) => byId.get(id) ?? "connector");
+}
+
 function sendRunClientNonce(
   clientNonce: string | undefined,
   messageId: string,
@@ -210,84 +255,98 @@ export async function threadSnapshot(
   deps: { prisma: PrismaClient },
   target: ThreadTarget,
 ): Promise<ThreadSnapshot> {
+  // Lock the thread row so messages, the event cursor, active runs, and live
+  // progress are read from one consistent commit. A torn Promise.all can
+  // otherwise advance the client cursor past thread.message.created while the
+  // ask message page still omits it — leaving waiting_input with no AskCard.
   if (target.kind === "bot") {
-    const [messagePage, last, run, busyBotName] = await Promise.all([
-      loadMessagePage(deps.prisma, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
-      deps.prisma.event.findFirst({
-        where: { threadId: target.threadId },
-        orderBy: { seq: "desc" },
-        select: { seq: true },
-      }),
-      deps.prisma.run.findFirst({
-        where: {
-          botId: target.botId,
-          status: { in: [...ACTIVE_RUN_STATUSES] },
-        },
-        orderBy: { createdAt: "desc" },
-      }),
+    const [busyBotName, core] = await Promise.all([
       resolveBusyBotName(deps.prisma, {
         computerId: target.bot.computer?.id,
         botId: target.botId,
         botName: target.bot.name,
       }),
+      deps.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
+        const [messagePage, last, run] = await Promise.all([
+          loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
+          tx.event.findFirst({
+            where: { threadId: target.threadId },
+            orderBy: { seq: "desc" },
+            select: { seq: true },
+          }),
+          tx.run.findFirst({
+            where: {
+              botId: target.botId,
+              status: { in: [...ACTIVE_RUN_STATUSES] },
+            },
+            orderBy: { createdAt: "desc" },
+          }),
+        ]);
+        const liveEvents = run
+          ? await tx.event.findMany({
+              where: {
+                threadId: target.threadId,
+                runId: run.id,
+                type: { in: ["thread.progress", "thread.subagent", "agent.tool.called"] },
+              },
+              orderBy: { seq: "asc" },
+            })
+          : [];
+        return { messagePage, last, run, liveEvents };
+      }),
     ]);
-    const liveEvents = run
-      ? await deps.prisma.event.findMany({
-          where: {
-            threadId: target.threadId,
-            runId: run.id,
-            type: { in: ["thread.progress", "thread.subagent", "agent.tool.called"] },
-          },
-          orderBy: { seq: "asc" },
-        })
-      : [];
     return {
       botId: target.botId,
       threadId: target.threadId,
-      cursor: last?.seq ?? -1,
-      messages: messagesWithLiveEvents(messagePage.messages, liveEvents),
-      olderCursor: messagePage.olderCursor,
-      run: run ? mapRun(run) : null,
+      cursor: core.last?.seq ?? -1,
+      messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents),
+      olderCursor: core.messagePage.olderCursor,
+      run: core.run ? mapRun(core.run) : null,
       computer: toComputerStatus(target.botId, target.bot.computer, busyBotName),
     };
   }
 
-  const [messagePage, last, activeRuns] = await Promise.all([
-    loadMessagePage(deps.prisma, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
-    deps.prisma.event.findFirst({
-      where: { threadId: target.threadId },
-      orderBy: { seq: "desc" },
-      select: { seq: true },
-    }),
-    deps.prisma.run.findMany({
-      where: {
-        threadId: target.threadId,
-        status: { in: [...ACTIVE_RUN_STATUSES] },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
-  const liveEvents =
-    activeRuns.length > 0
-      ? await deps.prisma.event.findMany({
-          where: {
-            threadId: target.threadId,
-            runId: { in: activeRuns.map((run) => run.id) },
-            type: { in: ["thread.progress", "thread.subagent", "agent.tool.called"] },
-          },
-          orderBy: { seq: "asc" },
-        })
-      : [];
+  const core = await deps.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
+    const [messagePage, last, activeRuns] = await Promise.all([
+      loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
+      tx.event.findFirst({
+        where: { threadId: target.threadId },
+        orderBy: { seq: "desc" },
+        select: { seq: true },
+      }),
+      tx.run.findMany({
+        where: {
+          threadId: target.threadId,
+          status: { in: [...ACTIVE_RUN_STATUSES] },
+        },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+    const liveEvents =
+      activeRuns.length > 0
+        ? await tx.event.findMany({
+            where: {
+              threadId: target.threadId,
+              runId: { in: activeRuns.map((run) => run.id) },
+              type: { in: ["thread.progress", "thread.subagent", "agent.tool.called"] },
+            },
+            orderBy: { seq: "asc" },
+          })
+        : [];
+    return { messagePage, last, activeRuns, liveEvents };
+  });
   return {
     groupId: target.groupId,
     groupName: target.groupName,
     members: target.members,
     threadId: target.threadId,
-    cursor: last?.seq ?? -1,
-    messages: messagesWithLiveEvents(messagePage.messages, liveEvents),
-    olderCursor: messagePage.olderCursor,
-    run: activeRuns[0] ? mapRun(activeRuns[0]) : null,
-    activeRuns: activeRuns.map(mapRun),
+    cursor: core.last?.seq ?? -1,
+    messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents),
+    olderCursor: core.messagePage.olderCursor,
+    run: core.activeRuns[0] ? mapRun(core.activeRuns[0]) : null,
+    activeRuns: core.activeRuns.map(mapRun),
   };
 }
 
@@ -316,11 +375,13 @@ function mapRun(run: {
   taskId: string;
   status: string;
   trigger: string;
+  routineId: string | null;
   modelProvider: string | null;
   modelId: string | null;
   error: string | null;
   startedAt: Date | null;
   completedAt: Date | null;
+  createdAt: Date;
 }) {
   return {
     id: run.id,
@@ -329,11 +390,13 @@ function mapRun(run: {
     taskId: run.taskId,
     status: run.status as never,
     trigger: run.trigger as never,
+    routineId: run.routineId ?? null,
     modelProvider: run.modelProvider,
     modelId: run.modelId,
     error: run.error,
     startedAt: run.startedAt?.toISOString() ?? null,
     completedAt: run.completedAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
   };
 }
 
@@ -348,7 +411,7 @@ export async function sendThreadMessage(
   input: {
     text?: string;
     artifactIds?: string[];
-    mentions?: string[];
+    mentions?: MentionTargetInput[];
     replyToMessageId?: string;
     clientNonce?: string;
   },
@@ -367,11 +430,17 @@ export async function sendThreadMessage(
       }
 
       if (target.kind === "bot") {
+        const mentionTargets = splitMentionTargets(input.mentions);
         const { blocks: attachmentBlocks, artifacts } = await resolveSendAttachments(
           { prisma: tx },
           actor,
           target.botId,
           input.artifactIds,
+        );
+        const connectorNames = await resolveOwnedConnectorDisplayNames(
+          tx,
+          actor,
+          mentionTargets.connectorMentionIds,
         );
         const blocks = buildUserMessageBlocks(input.text, attachmentBlocks);
         const message = await createThreadMessageInTransaction(tx, {
@@ -387,7 +456,7 @@ export async function sendThreadMessage(
             botId: target.botId,
             threadId: target.threadId,
             userId: actor.userId,
-            prompt: buildSendPrompt(input.text, artifacts),
+            prompt: buildSendPrompt(input.text, artifacts, connectorNames),
             status: "queued",
           },
         });
@@ -428,10 +497,11 @@ export async function sendThreadMessage(
 
       const members = await lockAndLoadGroupMembers(tx, actor, target);
       const memberBotIds = members.map((member) => member.botId);
+      const mentionTargets = splitMentionTargets(input.mentions);
       const targetBotIds = resolveGroupTargetBotIds({
         text: input.text ?? "",
         members: members.map((member) => ({ id: member.botId, name: member.name })),
-        explicitMentions: input.mentions,
+        explicitMentions: mentionTargets.botMentionIds,
       });
       const { blocks: attachmentBlocks, artifacts } = await resolveGroupSendAttachments(
         { prisma: tx },
@@ -439,6 +509,11 @@ export async function sendThreadMessage(
         target.groupId,
         memberBotIds,
         input.artifactIds,
+      );
+      const connectorNames = await resolveOwnedConnectorDisplayNames(
+        tx,
+        actor,
+        mentionTargets.connectorMentionIds,
       );
       const blocks = buildUserMessageBlocks(input.text, attachmentBlocks);
       const message = await createThreadMessageInTransaction(tx, {
@@ -456,7 +531,7 @@ export async function sendThreadMessage(
             botId,
             threadId: target.threadId,
             userId: actor.userId,
-            prompt: buildSendPrompt(input.text, artifacts),
+            prompt: buildSendPrompt(input.text, artifacts, connectorNames),
             status: "queued",
           },
         });

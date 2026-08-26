@@ -7,11 +7,13 @@ import type {
 import { describe, expect, it } from "vitest";
 import {
   activeThreadRuns,
+  clearActiveThreadRuns,
   computerPanelAutoBoot,
   computerTakeoverBlocked,
   isThreadSnapshotEvent,
   mergeThreadSnapshot,
   prependThreadMessagePage,
+  reconcileRefreshedThread,
   reduceComputerStatus,
   reduceThreadSnapshot,
   userHoldsComputerControl,
@@ -56,6 +58,22 @@ describe("thread event reduction", () => {
 
     expect(next.messages.map((item) => item.id)).toEqual(["m-0", "m-1", "m-2"]);
     expect(next.olderCursor).toBeNull();
+  });
+
+  it("ignores a stale thread refresh that is behind the live cursor", () => {
+    const live: ThreadSnapshot = {
+      ...snapshot([
+        message("ask-1", [{ kind: "ask", text: "Which city?", status: "pending" }], 11),
+      ]),
+      cursor: 12,
+    };
+    const stale: ThreadSnapshot = {
+      ...snapshot([message("m-1", [{ kind: "text", text: "older" }], 1)]),
+      cursor: 8,
+    };
+
+    expect(mergeThreadSnapshot(live, stale)).toBe(live);
+    expect(mergeThreadSnapshot(live, stale, true)).toBe(live);
   });
 
   it("accumulates progress deltas and keeps only the active progress message", () => {
@@ -187,11 +205,13 @@ describe("thread event reduction", () => {
       taskId: "task-1",
       status: "running",
       trigger: "user",
+      routineId: null,
       modelProvider: null,
       modelId: null,
       error: null,
       startedAt: null,
       completedAt: null,
+      createdAt: "2026-08-16T00:00:00.000Z",
     };
 
     const next = reduceThreadSnapshot(
@@ -208,6 +228,220 @@ describe("thread event reduction", () => {
     ).toBe(true);
     expect(isThreadSnapshotEvent(event({ type: "run.started" }))).toBe(true);
     expect(isThreadSnapshotEvent(event({ type: "run.completed" }))).toBe(true);
+    expect(isThreadSnapshotEvent(event({ type: "computer.takeover.requested" }))).toBe(true);
+  });
+
+  it("event-sources the active run on run.started so Stop does not wait on threads.get", () => {
+    const initial = snapshot([]);
+    const started = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "run.started",
+        seq: 3,
+        runId: "run-1",
+        payload: { trigger: "user" },
+      }),
+    );
+
+    expect(started?.run).toMatchObject({
+      id: "run-1",
+      botId: "bot-1",
+      status: "running",
+      trigger: "user",
+    });
+    expect(started?.activeRuns).toEqual([started?.run]);
+
+    const progressed = reduceThreadSnapshot(
+      started,
+      event({
+        type: "thread.progress",
+        seq: 4,
+        runId: "run-1",
+        payload: { delta: "still working" },
+      }),
+    );
+    expect(progressed?.run?.id).toBe("run-1");
+    expect(progressed?.cursor).toBe(4);
+  });
+
+  it("marks the run as waiting when computer takeover is requested", () => {
+    const run = threadRun("run-1");
+    const initial: ThreadSnapshot = {
+      ...snapshot([]),
+      run,
+      activeRuns: [run],
+    };
+
+    const waiting = reduceThreadSnapshot(
+      initial,
+      event({ type: "computer.takeover.requested", seq: 5, runId: run.id }),
+    );
+
+    expect(waiting?.run?.status).toBe("waiting_takeover");
+    expect(waiting?.activeRuns?.[0]?.status).toBe("waiting_takeover");
+  });
+
+  it("keeps event-sourced waiting_takeover when a stale refresh still shows the bot busy", () => {
+    const run = threadRun("run-1");
+    const waitingLocal: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 10,
+      run: { ...run, status: "waiting_takeover" },
+      activeRuns: [{ ...run, status: "waiting_takeover" }],
+    };
+    const staleRefresh: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 10,
+      run,
+      activeRuns: [run],
+      computer: computer({ state: "running", busyBotName: "Chief" }),
+    };
+
+    const reconciled = reconcileRefreshedThread(
+      waitingLocal,
+      staleRefresh,
+      computer({ state: "running", busyBotName: null }),
+    );
+
+    expect(reconciled.snapshot.run?.status).toBe("waiting_takeover");
+    expect(reconciled.computer?.busyBotName).toBeNull();
+    expect(computerTakeoverBlocked(reconciled.computer, reconciled.snapshot.run?.status)).toBe(
+      false,
+    );
+  });
+
+  it("ignores a refresh whose cursor is behind the event-sourced snapshot", () => {
+    const run = threadRun("run-1");
+    const newer: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 12,
+      run: { ...run, status: "waiting_takeover" },
+    };
+    const older: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 9,
+      run,
+      computer: computer({ busyBotName: "Chief" }),
+    };
+    const prevComputer = computer({ busyBotName: null });
+
+    const reconciled = reconcileRefreshedThread(newer, older, prevComputer);
+
+    expect(reconciled.snapshot).toBe(newer);
+    expect(reconciled.computer).toBe(prevComputer);
+  });
+
+  it("refreshes busy status when only transient thread events are ahead", () => {
+    const run = threadRun("run-1");
+    const newer: ThreadSnapshot = { ...snapshot([]), cursor: 12, run };
+    const older: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 9,
+      run,
+      computer: computer({ state: "running", controlHolder: "bot", busyBotName: "Chief" }),
+    };
+
+    const reconciled = reconcileRefreshedThread(
+      newer,
+      older,
+      computer({ state: "running", controlHolder: "bot", busyBotName: null }),
+    );
+
+    expect(reconciled.snapshot).toBe(newer);
+    expect(reconciled.computer?.busyBotName).toBe("Chief");
+  });
+
+  it("hydrates a live run from a refresh without rolling back newer progress", () => {
+    const run = threadRun("run-1");
+    const liveProgress = {
+      ...message("progress:run-1", [{ kind: "progress" as const, text: "Still working" }]),
+      runId: run.id,
+    };
+    const newer: ThreadSnapshot = { ...snapshot([liveProgress]), cursor: 12, run: null };
+    const older: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 11,
+      run,
+      computer: computer({ state: "running", controlHolder: "bot", busyBotName: "Chief" }),
+    };
+
+    const reconciled = reconcileRefreshedThread(newer, older, computer());
+
+    expect(reconciled.snapshot.cursor).toBe(12);
+    expect(reconciled.snapshot.messages).toEqual([liveProgress]);
+    expect(reconciled.snapshot.run).toBe(run);
+    expect(reconciled.computer?.busyBotName).toBe("Chief");
+  });
+
+  it("clears active runs and their transient progress after stop", () => {
+    const run = threadRun("run-1");
+    const durable = message("message-1", [{ kind: "text", text: "Keep me" }]);
+    const progress = {
+      ...message("progress:run-1", [{ kind: "progress" as const, text: "Still working" }]),
+      runId: run.id,
+    };
+    const stopped = clearActiveThreadRuns({
+      ...snapshot([durable, progress]),
+      run,
+      activeRuns: [run],
+      computer: computer({ state: "running", busyBotName: "Chief" }),
+    });
+
+    expect(stopped.run).toBeNull();
+    expect(stopped.activeRuns).toEqual([]);
+    expect(stopped.messages).toEqual([durable]);
+    expect(stopped.computer?.busyBotName).toBeNull();
+  });
+
+  it("keeps an optimistic stop clear when an older cursor refresh still looks busy", () => {
+    // Stop has no terminal event, so progress can leave the local cursor ahead of threads.get.
+    // After the shell clears run/busy locally, that older get must not restore Stop / Take control block.
+    const run = threadRun("run-1");
+    const stoppedLocal: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 15,
+      run: null,
+      activeRuns: [],
+      computer: computer({ state: "running", busyBotName: null }),
+    };
+    const staleBusyRefresh: ThreadSnapshot = {
+      ...snapshot([]),
+      cursor: 10,
+      run,
+      activeRuns: [run],
+      computer: computer({ state: "running", busyBotName: "Chief" }),
+    };
+    const clearedComputer = computer({ state: "running", busyBotName: null });
+
+    const reconciled = reconcileRefreshedThread(stoppedLocal, staleBusyRefresh, clearedComputer);
+
+    expect(reconciled.snapshot.run).toBeNull();
+    expect(reconciled.snapshot.activeRuns).toEqual([]);
+    expect(reconciled.computer?.busyBotName).toBeNull();
+    expect(computerTakeoverBlocked(reconciled.computer, reconciled.snapshot.run?.status)).toBe(
+      false,
+    );
+  });
+
+  it("always replaces the snapshot when switching to a different thread", () => {
+    const previous: ThreadSnapshot = {
+      ...snapshot([]),
+      threadId: "thread-writer",
+      cursor: 40,
+      computer: computer({ mode: "team", busyBotName: null }),
+    };
+    const next: ThreadSnapshot = {
+      ...snapshot([]),
+      botId: "bot-private",
+      threadId: "thread-private",
+      cursor: 0,
+      computer: computer({ mode: "dedicated", state: "running" }),
+    };
+
+    const reconciled = reconcileRefreshedThread(previous, next, previous.computer ?? null);
+
+    expect(reconciled.snapshot.threadId).toBe("thread-private");
+    expect(reconciled.computer?.mode).toBe("dedicated");
   });
 
   it("keeps group member status in sync with run lifecycle events", () => {
@@ -224,9 +458,12 @@ describe("thread event reduction", () => {
       event({ type: "run.started", botId: "bot-member", runId: run.id }),
     );
     expect(started?.members?.[0]?.status).toBe("running");
+    expect(started?.run?.id).toBe(run.id);
+    expect(started?.run?.status).toBe("running");
+    expect(started?.activeRuns?.map((item) => item.id)).toEqual([run.id]);
 
     const waiting = reduceThreadSnapshot(
-      { ...started!, run, activeRuns: [run] },
+      started!,
       event({
         type: "run.waiting_input",
         seq: 5,
@@ -281,11 +518,13 @@ describe("thread event reduction", () => {
         taskId: "task-1",
         status: "running",
         trigger: "user",
+        routineId: null,
         modelProvider: null,
         modelId: null,
         error: null,
         startedAt: null,
         completedAt: null,
+        createdAt: "2026-08-16T00:00:00.000Z",
       },
     };
 
@@ -299,6 +538,29 @@ describe("thread event reduction", () => {
     expect(
       reduceThreadSnapshot(waiting, event({ type: "run.waiting_input", seq: 7, runId: "run-1" })),
     ).toBe(waiting);
+  });
+
+  it("clears live progress when a run waits for input", () => {
+    const run = threadRun("run-1");
+    const initial: ThreadSnapshot = {
+      ...snapshot([
+        {
+          ...message("progress:run-1", [{ kind: "progress", text: "working…" }]),
+          runId: run.id,
+        },
+      ]),
+      run,
+      activeRuns: [run],
+    };
+
+    const waiting = reduceThreadSnapshot(
+      initial,
+      event({ type: "run.waiting_input", seq: 6, runId: run.id }),
+    );
+
+    expect(waiting?.messages).toEqual([]);
+    expect(waiting?.run?.status).toBe("waiting_input");
+    expect(waiting?.activeRuns?.[0]?.status).toBe("waiting_input");
   });
 
   it("accumulates tool-call steps and collapses repeats into a count", () => {
@@ -560,11 +822,13 @@ describe("thread event reduction", () => {
       taskId: "task-a",
       status: "running" as const,
       trigger: "user" as const,
+      routineId: null,
       modelProvider: null,
       modelId: null,
       error: null,
       startedAt: null,
       completedAt: null,
+      createdAt: "2026-08-16T00:00:00.000Z",
     };
     const otherLive = {
       ...message("progress:run-b", [{ kind: "progress" as const, text: "Other bot" }]),
@@ -673,11 +937,13 @@ describe("thread event reduction", () => {
       taskId: "task-a",
       status: "running" as const,
       trigger: "user" as const,
+      routineId: null,
       modelProvider: null,
       modelId: null,
       error: null,
       startedAt: null,
       completedAt: null,
+      createdAt: "2026-08-16T00:00:00.000Z",
     };
     const waitingRun = { ...newerRun, id: "run-waiting", botId: "bot-b", taskId: "task-b" };
     const initial: ThreadSnapshot = {
@@ -894,11 +1160,13 @@ function threadRun(id: string, botId = "bot-1"): NonNullable<ThreadSnapshot["run
     taskId: `task-${id}`,
     status: "running",
     trigger: "user",
+    routineId: null,
     modelProvider: null,
     modelId: null,
     error: null,
     startedAt: null,
     completedAt: null,
+    createdAt: "2026-08-16T00:00:00.000Z",
   };
 }
 

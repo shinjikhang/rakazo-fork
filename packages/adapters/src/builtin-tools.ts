@@ -6,6 +6,7 @@ export const DELEGATION_TOOL_NAMES = new Set([
   "archive_bot",
   "delete_bot",
   "handoff_to_bot",
+  "message_bot",
 ]);
 
 export const builtinAgentTools: ConnectorTool[] = [
@@ -241,6 +242,99 @@ export const builtinAgentTools: ConnectorTool[] = [
       required: ["content"],
     },
   },
+  // Semantic-memory tools: exposed by selectMemoryTools() only when a
+  // workspace memory provider is configured (which hides `remember`).
+  {
+    name: "save_memory",
+    description:
+      "Store a durable fact in this bot's semantic memory (preferences, decisions, recurring context). Use for anything worth recalling in future conversations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string" },
+      },
+      required: ["content"],
+    },
+  },
+  {
+    name: "recall_memory",
+    description: "Semantically search this bot's durable memory for facts relevant to a query.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "scratchpad_list",
+    description:
+      "List this bot's scratchpad / open-work items (todos and parked work). By default omits completed items.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeDone: {
+          type: "boolean",
+          description: "When true, include completed items.",
+        },
+      },
+    },
+  },
+  {
+    name: "scratchpad_add",
+    description:
+      "Add an open-work item to this bot's scratchpad. Use for todos or parked work that should outlive this turn. Not a reminder or schedule.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title for the item." },
+        status: {
+          type: "string",
+          enum: ["open", "parked", "done"],
+          description: "Defaults to open.",
+        },
+        notes: { type: "string", description: "Optional notes." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "scratchpad_update",
+    description: "Update a scratchpad item's title, status, or notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        itemId: { type: "string" },
+        title: { type: "string" },
+        status: { type: "string", enum: ["open", "parked", "done"] },
+        notes: { type: "string" },
+      },
+      required: ["itemId"],
+    },
+  },
+  {
+    name: "scratchpad_complete",
+    description: "Mark a scratchpad item done.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        itemId: { type: "string" },
+      },
+      required: ["itemId"],
+    },
+  },
+  {
+    name: "scratchpad_remove",
+    description: "Permanently remove a scratchpad item.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        itemId: { type: "string" },
+      },
+      required: ["itemId"],
+    },
+  },
   {
     name: "schedule_create",
     description:
@@ -290,6 +384,70 @@ export const builtinAgentTools: ConnectorTool[] = [
       properties: {
         routineId: { type: "string" },
         name: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "skill_read",
+    description:
+      "Load a Claude Agent Skill (SKILL.md recipe) by exact name. Call this when a catalog skill matches the user's request, then follow it immediately.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact skill name from the catalog." },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "skill_create",
+    description:
+      "Create a reusable Claude Agent Skill (generic how-to SKILL.md) shared across assistants. The Pi runtime already understands this format; we persist and inject them. Use when a multi-step task is worth repeating or the user asks to save a skill. Do not include account names, channels, or inboxes — those belong in a routine.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short skill name." },
+        description: {
+          type: "string",
+          description: "When to use this skill (shown in the / picker and used for auto-use).",
+        },
+        body: {
+          type: "string",
+          description: "Markdown steps and guidance after the frontmatter.",
+        },
+        content: {
+          type: "string",
+          description:
+            "Optional full SKILL.md (frontmatter + body) instead of name/description/body.",
+        },
+      },
+    },
+  },
+  {
+    name: "skill_update",
+    description:
+      "Update a user-created skill by name or id. Builtin and plugin skills are read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Current exact skill name." },
+        skillId: { type: "string" },
+        newName: { type: "string" },
+        description: { type: "string" },
+        body: { type: "string" },
+        content: { type: "string", description: "Optional full replacement SKILL.md." },
+      },
+    },
+  },
+  {
+    name: "skill_delete",
+    description:
+      "Delete a user-created skill by name or id. Builtin and plugin skills cannot be deleted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        skillId: { type: "string" },
       },
     },
   },
@@ -346,6 +504,23 @@ export const builtinAgentTools: ConnectorTool[] = [
         },
       },
       required: ["confirm_name"],
+    },
+  },
+  {
+    name: "message_bot",
+    description:
+      "Send a message to one of the user's other bots. Asynchronous: this returns as soon as the message is sent, and any reply arrives later as a new message that wakes you. Never wait for a reply in this turn.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bot_id: { type: "string", description: "Target bot id from your teammate list." },
+        confirm_name: {
+          type: "string",
+          description: "Exact name of the target bot when bot_id is omitted.",
+        },
+        message: { type: "string", description: "What to send." },
+      },
+      required: ["message"],
     },
   },
   {

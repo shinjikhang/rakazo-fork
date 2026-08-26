@@ -1,5 +1,13 @@
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import { type Api, type Model, type Models, Type } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  clampThinkingLevel,
+  type Model,
+  type Models,
+  type ModelThinkingLevel,
+  type SimpleStreamOptions,
+  Type,
+} from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type {
   AdapterContext,
@@ -17,6 +25,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
+import { textContentArg } from "./tool-text.js";
 
 const running = new Map<string, AbortController>();
 // Built on first use, not at module load: entry points call loadRootEnv() after
@@ -32,9 +41,14 @@ const MAX_PARALLEL_SUBAGENTS = 4;
 // that to reasoning.effort "none", which 400s on endpoints that mandate
 // reasoning (e.g. google/gemini-3.7-flash). Keep a real level when model.reasoning
 // is set; plain models stay off.
-const REASONING_MODEL_THINKING_LEVEL = "medium";
-function thinkingLevelFor(model: { reasoning?: boolean }) {
-  return model.reasoning ? REASONING_MODEL_THINKING_LEVEL : "off";
+const REASONING_MODEL_THINKING_LEVEL: ModelThinkingLevel = "medium";
+function thinkingLevelFor(
+  model: Model<Api>,
+  preferred?: ModelThinkingLevel | null,
+): ModelThinkingLevel {
+  if (!model.reasoning) return "off";
+  if (preferred) return clampThinkingLevel(model, preferred);
+  return clampThinkingLevel(model, REASONING_MODEL_THINKING_LEVEL);
 }
 // Pi forwards these names to OpenAI Responses, whose function-name contract is
 // ^[a-zA-Z0-9_-]+$ with a maximum length of 64 characters.
@@ -117,7 +131,8 @@ export class PiAgentRuntime implements AgentRuntime {
         const history = toHistory(request.history, request.prompt);
 
         const agent = new Agent({
-          streamFn: (m, ctx, options) => models.streamSimple(m, ctx, options),
+          streamFn: (m, ctx, options) =>
+            models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
           getApiKey: async () => apiKey,
           transformContext: async (messages) => pruneComputerScreenshotContext(messages),
           initialState: {
@@ -127,7 +142,7 @@ export class PiAgentRuntime implements AgentRuntime {
                 ? "You are a Cluega Bot bot with a real computer. Use computer_observe and computer_act to operate its visible desktop, including browsers and installed applications. Use shell and the file tools for precise terminal and filesystem work. The user may interact with the same desktop while you run, so re-observe when the screen may have changed. Be concise."
                 : "You are a Cluega Bot bot with a persistent sandbox filesystem and shell. Be concise."),
             model,
-            thinkingLevel: thinkingLevelFor(model),
+            thinkingLevel: thinkingLevelFor(model, request.model.thinkingLevel),
             tools,
             messages: history,
           },
@@ -206,9 +221,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
         const error = agent.state.errorMessage;
         if (error) {
-          queue.push({ type: "text", text: `I hit a problem: ${sanitizeError(error)}` });
-          queue.push({ type: "done", text: sanitizeError(error) });
-          return;
+          throw new Error(sanitizeError(error));
         }
         if (!streamed) {
           const fallback = assistantText(agent.state.messages.at(-1)) || "I finished the work.";
@@ -218,8 +231,7 @@ export class PiAgentRuntime implements AgentRuntime {
         queue.push({ type: "done", text: streamed });
       } catch (error) {
         const message = sanitizeError(error instanceof Error ? error.message : String(error));
-        queue.push({ type: "text", text: `I hit a problem: ${message}` });
-        queue.push({ type: "done", text: message });
+        queue.fail(new Error(message));
       } finally {
         queue.close();
       }
@@ -333,6 +345,12 @@ export function describeToolActivity(toolName: string, args: unknown): string {
   if (toolName === "computer_act") return "Operating the computer";
   if (toolName === "run_subagent") return `Delegating to helper: ${detail(record.name)}`;
   if (toolName === "remember") return "Saving a note to memory";
+  if (toolName === "skill_read") return `Reading skill: ${detail(record.name)}`;
+  if (toolName === "skill_create") return `Creating skill: ${detail(record.name ?? "skill")}`;
+  if (toolName === "skill_update")
+    return `Updating skill: ${detail(record.name ?? record.skillId)}`;
+  if (toolName === "skill_delete")
+    return `Deleting skill: ${detail(record.name ?? record.skillId)}`;
   const mcp = toolName.match(/^mcp__(.+?)__(.+)$/);
   if (mcp) return `Using ${mcp[1]}: ${mcp[2]}`;
   return `Using ${toolName}`;
@@ -417,7 +435,10 @@ function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): 
         return { reason: String(raw.reason ?? "I need you on the screen.") };
       }
       if (tool.name === "write_file") {
-        return { path: String(raw.path ?? "notes/result.txt"), content: String(raw.content ?? "") };
+        return {
+          path: String(raw.path ?? "notes/result.txt"),
+          content: textContentArg(raw.content, ""),
+        };
       }
       if (tool.name === "computer_act") {
         return {
@@ -529,7 +550,8 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   );
   const nestedHost: ToolHost = { ...host, depth: 1 };
   const nested = new Agent({
-    streamFn: (m, ctx, options) => host.models.streamSimple(m, ctx, options),
+    streamFn: (m, ctx, options) =>
+      host.models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
     getApiKey: async () => host.apiKey,
     transformContext: async (messages) => pruneComputerScreenshotContext(messages),
     initialState: {
@@ -542,7 +564,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
         .filter(Boolean)
         .join(" "),
       model: host.model,
-      thinkingLevel: thinkingLevelFor(host.model),
+      thinkingLevel: thinkingLevelFor(host.model, host.request.model.thinkingLevel),
       tools: toAgentTools(childDefs, nestedHost),
       messages: [],
     },
@@ -818,6 +840,7 @@ function sanitizeError(message: string) {
 
 interface EventQueue {
   push(event: AgentRuntimeEvent): void;
+  fail(error: Error): void;
   close(): void;
   iterate(): AsyncIterable<AgentRuntimeEvent>;
 }
@@ -873,9 +896,15 @@ function createQueue(): EventQueue {
   const items: AgentRuntimeEvent[] = [];
   let wake: (() => void) | undefined;
   let closed = false;
+  let failure: Error | undefined;
   return {
     push(event) {
       items.push(event);
+      wake?.();
+    },
+    fail(error) {
+      failure = error;
+      closed = true;
       wake?.();
     },
     close() {
@@ -883,15 +912,30 @@ function createQueue(): EventQueue {
       wake?.();
     },
     async *iterate() {
-      while (!closed || items.length) {
+      while (true) {
         if (items.length) {
           yield items.shift()!;
           continue;
         }
+        if (failure) throw failure;
+        if (closed) return;
         await new Promise<void>((resolve) => {
           wake = resolve;
         });
       }
     },
   };
+}
+
+export function reliableStreamOptions(
+  model: Pick<Model<Api>, "api" | "provider">,
+  options?: SimpleStreamOptions,
+): SimpleStreamOptions | undefined {
+  if (model.provider !== "openai-codex" && model.api !== "openai-codex-responses") {
+    return options;
+  }
+  // Pi cannot fall back after a WebSocket has emitted its start event. Long tool
+  // runs then surface abnormal close 1006 as a terminal model error. SSE has
+  // bounded network retries and no long-lived connection between tool turns.
+  return { ...options, transport: "sse" };
 }
