@@ -217,9 +217,12 @@ lưu phải là id của CDP. Nối làn Composio qua gateway.
 
 ## 10. Giả định cần xác nhận
 
-1. **Rakazo và CDP dùng cùng một project Composio (cùng API key).** Khác project thì kết nối OAuth ở
-   CDP vô hình với Rakazo và toàn bộ làn Composio sụp. Chưa kiểm chứng được trên máy này —
-   `COMPOSIO_API_KEY` không có trong `.env` của gateway.
+1. ~~Rakazo và CDP dùng cùng một project Composio~~ — **đã xác nhận 26/08**: hai bên dùng chung API
+   key. Chưa kiểm chứng được bằng máy (`COMPOSIO_API_KEY` không có trong `.env` của gateway ở máy
+   dev), nhưng đây là quyết định đã chốt, không còn là giả định.
+
+   Lưu ý chung API key **chưa đủ**: Composio lưu kết nối dưới chuỗi id mà bên gọi truyền vào. Chung
+   key mà khác chuỗi id thì vẫn không thấy nhau — đó chính là §4, và là lý do §4 chịu lực.
 2. **Quy ước tên tool của Composio.** Chưa kiểm chứng được vì lý do trên. Không có chỗ nào trong
    thiết kế này dựa vào nó, nhưng §5.3 của làn quảng cáo dựa vào tiền tố tên tool của nền tảng
    (`tiktok_`, `facebook_`), và cái đó **đã đo**: 246 tool `tiktok_`, 110 tool `facebook_`.
