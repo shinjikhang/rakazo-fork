@@ -246,10 +246,14 @@ lưu phải là id của CDP. Nối làn Composio qua gateway.
    thiết kế này dựa vào nó, nhưng §5.3 của làn quảng cáo dựa vào tiền tố tên tool của nền tảng
    (`tiktok_`, `facebook_`), và cái đó **đã đo**: 246 tool `tiktok_`, 110 tool `facebook_`.
 3. **CDP đồng ý thêm hai endpoint liệt kê** ở §5.1, và đồng ý rằng đó là chỗ liệt kê duy nhất.
-4. **`connected_by_user_id` là cùng chuỗi mà CDP truyền cho Composio làm entity id.** `model_composio.go`
-   có *cả hai* cột `user_id` và `connected_by_user_id`; cần biết cột nào là chuỗi đã gửi Composio. Nếu
-   là `user_id` thì payload §5.1 phải trả cột đó cho làn Composio, không phải `connected_by_user_id`.
-   Đây là giả định duy nhất còn có thể phá làn Composio — hỏi người viết `usecase/composio` là biết.
+4. ~~`connected_by_user_id` là cùng chuỗi mà CDP truyền cho Composio~~ — **đo trên DB dev 26/08**:
+   hai cột `user_id` và `connected_by_user_id` của `composio_connections` **bằng nhau** trên mọi hàng
+   thật (2 hàng: `googledocs`, `googlesheets`, cùng chủ `019e4394-f6e8-…`). Dùng
+   `connected_by_user_id` là an toàn.
+
+   Vẫn nên biết: hai cột *có thể* lệch nhau về nguyên tắc — ví dụ khi admin nối hộ người khác. Nếu
+   sau này xuất hiện hàng lệch, làn Composio phải chuyển sang `user_id`, vì đó mới là chuỗi Composio
+   dùng để tra kết nối.
 
 5. **Kết nối quảng cáo thuộc tenant, không thuộc người** — nên "một bot cho người nối" (D4) nghĩa là
    đồng nghiệp trong cùng tenant **không thấy** bot đó, dù tài khoản quảng cáo là của cả tenant. Đây là
