@@ -37,8 +37,20 @@ describe("CDP inventory client", () => {
           connected_by_user_id: "u1",
           status: "active",
         },
-        { kind: "carrier-pigeon", key: "x", connection_id: "c2", connected_by_user_id: "u2", status: "active" },
-        { kind: "composio", key: "gmail", connection_id: "c3", connected_by_user_id: "u1", status: "revoked" },
+        {
+          kind: "carrier-pigeon",
+          key: "x",
+          connection_id: "c2",
+          connected_by_user_id: "u2",
+          status: "active",
+        },
+        {
+          kind: "composio",
+          key: "gmail",
+          connection_id: "c3",
+          connected_by_user_id: "u1",
+          status: "revoked",
+        },
       ])) as unknown as typeof fetch;
 
     const cdp = createCdpInventory({ baseUrl: "https://cdp.test", internalKey: "k", fetchImpl });
@@ -48,7 +60,8 @@ describe("CDP inventory client", () => {
   });
 
   it("throws on a non-2xx so the caller can skip the tenant instead of revoking", async () => {
-    const fetchImpl = (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    const fetchImpl = (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch;
     const cdp = createCdpInventory({ baseUrl: "https://cdp.test", internalKey: "k", fetchImpl });
     await expect(cdp.listConnections("t1")).rejects.toThrow(/500/);
   });
