@@ -61,27 +61,28 @@ function mcpFetch(state: { failNext: boolean; initializations: number }) {
   });
 }
 
+function newConnector(fetchImpl?: typeof fetch) {
+  const state = { failNext: false, initializations: 0 };
+  vi.stubGlobal("fetch", fetchImpl ?? mcpFetch(state));
+  const prisma = {
+    botMcpServer: {
+      findMany: vi.fn().mockResolvedValue([ASSIGNMENT]),
+      findFirst: vi.fn().mockResolvedValue(ASSIGNMENT),
+    },
+  };
+  const connector = new McpConnector(prisma as never, {} as never, {
+    network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+  });
+  return { connector, state };
+}
+
+const contextFor = (workspaceId: string, userId: string) =>
+  ({ workspaceId, userId, botId: "bot-1", signal: new AbortController().signal }) as never;
+
 describe("MCP connector session cache", () => {
   it("evicts a session after a failed call so the next call reconnects instead of reusing a dead session", async () => {
-    const state = { failNext: false, initializations: 0 };
-    vi.stubGlobal("fetch", mcpFetch(state));
-    const prisma = {
-      botMcpServer: {
-        findMany: vi.fn().mockResolvedValue([ASSIGNMENT]),
-        findFirst: vi.fn().mockResolvedValue(ASSIGNMENT),
-      },
-    };
-    const connector = new McpConnector(prisma as never, {} as never, {
-      network: {
-        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
-      },
-    });
-    const context = {
-      workspaceId: "w1",
-      userId: "u1",
-      botId: "bot-1",
-      signal: new AbortController().signal,
-    } as never;
+    const { connector, state } = newConnector();
+    const context = contextFor("w1", "u1");
     const call = {
       tool: "mcp__demo__echo",
       args: {},
@@ -107,19 +108,7 @@ describe("MCP connector session cache", () => {
   });
 
   it("does not reuse one session across workspaces", async () => {
-    const state = { failNext: false, initializations: 0 };
-    vi.stubGlobal("fetch", mcpFetch(state));
-    const prisma = {
-      botMcpServer: {
-        findMany: vi.fn().mockResolvedValue([ASSIGNMENT]),
-        findFirst: vi.fn().mockResolvedValue(ASSIGNMENT),
-      },
-    };
-    const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
-    });
-    const contextFor = (workspaceId: string, userId: string) =>
-      ({ workspaceId, userId, botId: "bot-1", signal: new AbortController().signal }) as never;
+    const { connector, state } = newConnector();
 
     await connector.discoverTools(contextFor("w1", "u1"));
     expect(state.initializations).toBe(1);
@@ -134,28 +123,16 @@ describe("MCP connector session cache", () => {
   });
 
   it("sends the run identity on every outbound MCP request", async () => {
-    const state = { failNext: false, initializations: 0 };
     const seen: Array<{ tenant: string; user: string }> = [];
-    const inner = mcpFetch(state);
-    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const inner = mcpFetch({ failNext: false, initializations: 0 });
+    const { connector } = newConnector((async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       seen.push({
         tenant: request.headers.get("x-tenant-id") ?? "",
         user: request.headers.get("x-user-id") ?? "",
       });
       return inner(request);
-    });
-    const prisma = {
-      botMcpServer: {
-        findMany: vi.fn().mockResolvedValue([ASSIGNMENT]),
-        findFirst: vi.fn().mockResolvedValue(ASSIGNMENT),
-      },
-    };
-    const connector = new McpConnector(prisma as never, {} as never, {
-      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
-    });
-    const contextFor = (workspaceId: string, userId: string) =>
-      ({ workspaceId, userId, botId: "bot-1", signal: new AbortController().signal }) as never;
+    }) as typeof fetch);
 
     await connector.discoverTools(contextFor("w1", "u1"));
     await connector.discoverTools(contextFor("w2", "u2"));
