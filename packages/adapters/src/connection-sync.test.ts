@@ -87,7 +87,7 @@ describe("connection sync", () => {
 
     const assignment = upserts.find((row) => row.table === "botMcpServer");
     expect(assignment?.data.allowAllTools).toBe(false);
-    expect((assignment?.data.allowedTools as string[]).length).toBeGreaterThan(0);
+    expect((assignment?.data.allowedTools as string[] | undefined)?.length).toBeGreaterThan(0);
     expect(assignment?.data.allowedTools).toContain("tiktok_get_campaigns");
   });
 
@@ -189,5 +189,25 @@ describe("connection sync", () => {
 
     expect(report.botsCreated).toBe(0);
     expect(upserts.some((row) => row.table === "bot")).toBe(false);
+  });
+
+  it("does not overlap two syncs", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    cdp.listTenants = vi.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return [];
+    });
+    const { prisma } = fakePrisma();
+    const sync = createConnectionSync({
+      prisma: prisma as never,
+      cdp: cdp as never,
+      gatewayMcpUrl: "https://gw.test/gateway/cluega/mcp",
+    });
+    await Promise.all([sync.syncOnce(), sync.syncOnce()]);
+    expect(maxInFlight).toBe(1);
   });
 });

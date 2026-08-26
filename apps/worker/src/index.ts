@@ -5,6 +5,8 @@ loadRootEnv();
 
 import {
   createBackgroundJobHandlers,
+  createCdpInventory,
+  createConnectionSync,
   createConnectorStack,
   createJobReconciler,
   createPostgresReconciliationLeadership,
@@ -135,10 +137,24 @@ async function main() {
   });
   reconciler.start();
 
+  const cdpBaseUrl = process.env.CDP_BASE_URL;
+  const cdpInternalKey = process.env.CDP_INTERNAL_API_KEY;
+  const gatewayMcpUrl = process.env.CLUEGA_GATEWAY_MCP_URL;
+  const connectionSync =
+    cdpBaseUrl && cdpInternalKey && gatewayMcpUrl
+      ? createConnectionSync({
+          prisma,
+          cdp: createCdpInventory({ baseUrl: cdpBaseUrl, internalKey: cdpInternalKey }),
+          gatewayMcpUrl,
+        })
+      : undefined;
+  connectionSync?.start();
+
   let stopping = false;
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    await connectionSync?.stop();
     await reconciler.stop();
     await jobHost.stop();
     await jobs.close();

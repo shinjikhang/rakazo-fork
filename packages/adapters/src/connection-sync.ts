@@ -40,11 +40,14 @@ function allowedToolsFor(connection: CdpConnection): string[] {
   return [...seed, ...GATEWAY_TOOLS];
 }
 
-export function createConnectionSync(deps: {
-  prisma: PrismaClient;
-  cdp: CdpInventory;
-  gatewayMcpUrl: string;
-}) {
+export function createConnectionSync(
+  deps: { prisma: PrismaClient; cdp: CdpInventory; gatewayMcpUrl: string },
+  options: { intervalMs?: number } = {},
+) {
+  const intervalMs = options.intervalMs ?? 5 * 60_000;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let running: Promise<SyncReport> | undefined;
+
   const syncTenant = async (tenantId: string, report: SyncReport): Promise<void> => {
     const connections = await deps.cdp.listConnections(tenantId);
 
@@ -153,7 +156,11 @@ export function createConnectionSync(deps: {
             createdAt: now,
             updatedAt: now,
           },
-          update: { allowAllTools: false, allowedTools: allowedToolsFor(connection), updatedAt: now },
+          update: {
+            allowAllTools: false,
+            allowedTools: allowedToolsFor(connection),
+            updatedAt: now,
+          },
         });
       });
 
@@ -162,8 +169,9 @@ export function createConnectionSync(deps: {
     }
   };
 
-  return {
-    async syncOnce(): Promise<SyncReport> {
+  const syncOnce = (): Promise<SyncReport> => {
+    if (running) return running;
+    running = (async () => {
       const report: SyncReport = {
         tenants: 0,
         botsCreated: 0,
@@ -185,6 +193,27 @@ export function createConnectionSync(deps: {
         }
       }
       return report;
+    })().finally(() => {
+      running = undefined;
+    });
+    return running;
+  };
+
+  return {
+    syncOnce,
+    start() {
+      if (timer) return;
+      void syncOnce().catch((error) => console.error("connection sync", error));
+      timer = setInterval(
+        () => void syncOnce().catch((error) => console.error("connection sync", error)),
+        intervalMs,
+      );
+      timer.unref?.();
+    },
+    async stop() {
+      if (timer) clearInterval(timer);
+      timer = undefined;
+      await running?.catch(() => undefined);
     },
   };
 }
