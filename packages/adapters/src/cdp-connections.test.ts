@@ -23,8 +23,8 @@ describe("CDP inventory client", () => {
       fetchImpl,
     });
     expect(await cdp.listTenants()).toEqual(["019e4394-f597-7839-83c9-5910622cb951"]);
-    expect(seen[0].url).toBe("https://cdp.test/internal/v1/tenants");
-    expect(seen[0].key).toBe("k");
+    expect(seen[0]?.url).toBe("https://cdp.test/internal/v1/tenants");
+    expect(seen[0]?.key).toBe("k");
   });
 
   it("parses connections and drops rows it cannot understand", async () => {
@@ -44,7 +44,7 @@ describe("CDP inventory client", () => {
     const cdp = createCdpInventory({ baseUrl: "https://cdp.test", internalKey: "k", fetchImpl });
     const rows = await cdp.listConnections("t1");
     expect(rows.map((row) => row.connectionId)).toEqual(["c1", "c3"]);
-    expect(rows[0].kind).toBe("ads");
+    expect(rows[0]?.kind).toBe("ads");
   });
 
   it("throws on a non-2xx so the caller can skip the tenant instead of revoking", async () => {
