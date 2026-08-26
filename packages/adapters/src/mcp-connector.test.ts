@@ -132,4 +132,38 @@ describe("MCP connector session cache", () => {
 
     await connector.close();
   });
+
+  it("sends the run identity on every outbound MCP request", async () => {
+    const state = { failNext: false, initializations: 0 };
+    const seen: Array<{ tenant: string; user: string }> = [];
+    const inner = mcpFetch(state);
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      seen.push({
+        tenant: request.headers.get("x-tenant-id") ?? "",
+        user: request.headers.get("x-user-id") ?? "",
+      });
+      return inner(request);
+    });
+    const prisma = {
+      botMcpServer: {
+        findMany: vi.fn().mockResolvedValue([ASSIGNMENT]),
+        findFirst: vi.fn().mockResolvedValue(ASSIGNMENT),
+      },
+    };
+    const connector = new McpConnector(prisma as never, {} as never, {
+      network: { resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }] },
+    });
+    const contextFor = (workspaceId: string, userId: string) =>
+      ({ workspaceId, userId, botId: "bot-1", signal: new AbortController().signal }) as never;
+
+    await connector.discoverTools(contextFor("w1", "u1"));
+    await connector.discoverTools(contextFor("w2", "u2"));
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((header) => header.tenant !== "" && header.user !== "")).toBe(true);
+    expect(new Set(seen.map((header) => header.tenant))).toEqual(new Set(["w1", "w2"]));
+
+    await connector.close();
+  });
 });

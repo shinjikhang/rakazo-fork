@@ -210,6 +210,9 @@ export class McpConnector implements ConnectorProvider {
         const headers = {
           ...(material.headers ?? {}),
           ...(staticToken ? { Authorization: staticToken } : {}),
+          // Identity goes last: user-supplied headers must not be able to spoof a tenant.
+          "x-tenant-id": context.workspaceId,
+          "x-user-id": context.userId,
         };
         await session.connectRemote({
           url: server.endpoint,
