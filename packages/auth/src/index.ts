@@ -148,4 +148,9 @@ export const blockedAuthPaths = [
   "/organization/reject-invitation",
   "/organization/remove-member",
   "/organization/update-member-role",
+  // user.id MUST be the CDP user id: it's the string Composio uses to look up OAuth
+  // connections, and the x-user-id sent to the gateway. Signing up here would mint a
+  // second id for the same person, and their connections would become invisible.
+  "/sign-up/email",
+  "/sign-up",
 ];
