@@ -140,11 +140,18 @@ cần retry, không cần idempotency token, và **không cần xác thực chi�
 
 Làn quảng cáo:
 
-| Hàng | Giá trị |
-|---|---|
-| `mcp_servers` | `slug: "cluega"`, `transport: "streamable_http"`, endpoint là `/gateway/cluega/mcp` |
-| `bots` | tên theo nền tảng, `workspaceId` = tenant, `userId` = owner |
-| `bot_mcp_servers` | `allowAllTools: false`, `allowedTools` = tool của nền tảng đó |
+| Hàng | Phạm vi | Giá trị |
+|---|---|---|
+| `mcp_servers` | **một hàng cho mỗi `(tenant, chủ)`**, dùng chung cho mọi kết nối quảng cáo của người đó | `slug: "cluega"`, `transport: "streamable_http"`, endpoint là `/gateway/cluega/mcp` |
+| `bots` | mỗi kết nối một bot | tên theo nền tảng, `workspaceId` = tenant, `userId` = owner |
+| `bot_mcp_servers` | mỗi kết nối một hàng | `allowAllTools: false`, `allowedTools` = tool của nền tảng đó |
+
+**Vì sao `mcp_servers` dùng chung chứ không phải mỗi kết nối một hàng** — sửa ngày 26/08 sau khi e2e
+thất bại. Bảng có `UNIQUE (workspaceId, userId, slug)`, nên từ kết nối thứ hai của cùng một người là
+`P2002`. Bản spec đầu nói mỗi kết nối một hàng cùng `slug: "cluega"`: bất khả thi.
+
+Dùng chung cũng đúng về bản chất: mọi kết nối quảng cáo trỏ về cùng một endpoint gộp. Phạm vi theo
+từng kết nối đã nằm ở `bot_mcp_servers`, đúng chỗ của nó.
 
 `allowedTools` tính bằng tiền tố tên tool, lấy từ `tools/list` của endpoint gộp lúc đồng bộ: `tiktok_`
 cho TikTok, `facebook_` cho Facebook, `google_` cho Google Ads, cộng `cluega_tiktok_ad_manager_` cho
@@ -161,8 +168,15 @@ Làn Composio: **không có hàng `mcp_servers`**. Kết nối đã nằm ở b�
 
 ### 5.4 Thu hồi
 
-Tắt `mcp_servers.enabled`, xoá hàng `bot_mcp_servers`, tăng `revision`. Bot còn nguyên cùng toàn bộ
-lịch sử chat. Nối lại thì tool quay về đúng bot cũ, vì khoá idempotent không đổi.
+Xoá hàng `bot_mcp_servers` của kết nối đó, và **tăng `revision`** của hàng `mcp_servers` dùng chung.
+Bot còn nguyên cùng toàn bộ lịch sử chat. Nối lại thì tool quay về đúng bot cũ, vì khoá idempotent
+không đổi.
+
+**Không tắt `enabled` khi chỉ một kết nối bị ngắt** — hàng `mcp_servers` là dùng chung, các bot quảng
+cáo khác của cùng người vẫn cần nó. Chỉ tắt khi người đó không còn kết nối quảng cáo nào đang sống.
+
+Một kết nối lỗi **không được** làm mất phần còn lại của tenant: bắt lỗi ở mức từng kết nối rồi đi
+tiếp. Lỗi ở mức *lấy danh sách* thì vẫn bỏ qua cả tenant và không thu hồi gì — hai chuyện khác nhau.
 
 Tăng `revision` là bắt buộc: `McpConnector.sessionFor` so `revision` để quyết định dùng lại phiên
 (`packages/adapters/src/mcp-connector.ts:151`). Không tăng thì phiên cũ vẫn phục vụ tool đã bị thu.
