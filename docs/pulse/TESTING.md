@@ -617,3 +617,39 @@ ký tự (`packages/adapters/src/pi-runtime.ts`). Sau khi gateway bật endpoint
       | awk '{ n = length("mcp__cluega__" $1); if (n > 64) print n, $1 }'
 
 Không dòng nào in ra là đạt. Tên bị băm sẽ làm hỏng mọi luật phê duyệt khớp theo tên tool.
+
+## Nối Rakazo vào endpoint gộp qua ngrok
+
+`assertSafeRemoteUrl` (`packages/adapters/src/remote-mcp.ts`) chỉ chấp nhận HTTPS và chặn hostname
+loopback, nên `http://127.0.0.1:5235` không đăng ký được. Bọc gateway bằng ngrok là cách chạy thử
+mà không phải nới chốt chặn SSRF.
+
+**Cảnh báo:** tunnel phơi gateway ra công khai, và `tools/call` chỉ cần header `x-tenant-id` —
+ai biết URL là gọi được TikTok Ads của tenant đó, tiền thật. Mở đúng lúc test rồi đóng.
+
+    ngrok http 5235
+    # nếu máy đã có agent ngrok khác, cổng 4040 bị chiếm; lấy URL từ log của agent mình,
+    # đừng lấy từ http://127.0.0.1:4040/api/tunnels — đó là tunnel của agent kia
+
+Đăng ký (không có UI cho việc này, phải dùng SQL — xem `handover-checklist.md`):
+
+    insert into mcp_servers (id, "workspaceId", "userId", slug, name, description,
+      transport, endpoint, args, env, headers, enabled, revision, "createdAt", "updatedAt")
+    values ('<id>', '<workspaceId>', '<userId>', 'cluega', 'Cluega MCP', '',
+      'streamable_http', 'https://<ngrok>/gateway/cluega/mcp', '[]', '{}', '{}', true, 1, now(), now());
+
+    insert into bot_mcp_servers (id, "workspaceId", "botId", "serverId", "userId",
+      "allowAllTools", "allowedTools", "createdAt", "updatedAt")
+    values ('<id>', '<workspaceId>', '<botId>', '<serverId>', '<userId>', true, '[]', now(), now());
+
+Slug **phải** là `cluega`: tool tới runtime dưới dạng `mcp__cluega__<tên>`, và tên dài nhất hiện
+là 61/64 ký tự. Slug dài hơn sẽ làm băm tên và hỏng luật phê duyệt.
+
+URL ngrok đổi mỗi lần khởi động lại — phải `update mcp_servers set endpoint=..., revision=revision+1`,
+nếu không phiên cache cũ vẫn trỏ vào tunnel đã chết.
+
+Kiểm danh tính: chạy `discoverTools` cho hai workspace rồi soi log gateway.
+
+    grep -o '"X-Tenant-Id":"[^"]*"' <gateway.log> | sort | uniq -c
+
+Phải thấy đúng hai giá trị khác nhau, mỗi cái kèm `X-User-Id` riêng.
