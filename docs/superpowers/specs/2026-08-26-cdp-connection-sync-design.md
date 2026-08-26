@@ -23,7 +23,7 @@ Hôm nay việc đó làm bằng tay: tôi chạy SQL để tạo `organization`
 
 **D3. Một endpoint ở CDP là toàn bộ giao diện giữa hai service.**
 
-**D4. Bot theo từng người**, không theo tenant.
+**D4. Bot thuộc người đã nối** (`connected_by_user_id`), cho cả hai làn.
 
 **D5. Định danh dùng chung: `organization.id` = tenant CDP, `user.id` = user CDP.**
 
@@ -89,14 +89,21 @@ GET /internal/v1/tenants                            (service auth, scope read)
 GET /internal/v1/tenants/{tenant}/connections       (service auth, scope read)
 → [{ kind: "composio" | "ads",
       key: "gmail" | "tiktok" | "facebook" | "google-ads",
-      owner_user_id, owner_email, owner_name,
-      connection_id, status: "active" | "revoked" }]
+      connected_by_user_id, connection_id,
+      status: "active" | "revoked" }]
 ```
 
-`owner_email` là bắt buộc, không phải cho đẹp: `user.email` trong Rakazo là `NOT NULL UNIQUE`
-(`user_email_key`), nên không tạo được hàng `user` chỉ từ một id. `owner_name` cũng `NOT NULL`.
-Nếu CDP không muốn trả email, Rakazo phải tự bịa `{owner_user_id}@cdp.invalid` — chạy được và không
-bao giờ trùng, nhưng khi đó mọi chỗ hiển thị người dùng trong Rakazo đều sai. Trả email đúng thì rẻ hơn.
+**`connected_by_user_id` đã tồn tại**, không phải thêm mới. Cột đó có trên *mọi* model nền tảng —
+`model_tiktok.go`, `model_facebook.go`, `model_google_ads.go`, `model_tiktok_shop.go`,
+`model_composio.go`, `model_line.go`, `model_telegram.go` — và được ghi lúc callback OAuth
+(`usecase/tiktokone/callback.go:145` `ConnectedByUserID: state.UserID`). Nó chỉ chưa được đưa ra
+trong `ConnectionSummary`, mà các struct đó lại khác hình dạng ở từng nền tảng.
+
+**Không có email trong payload.** `user.email` bên Rakazo là `NOT NULL UNIQUE`, nhưng CDP không tra
+được email theo id: `IdentityProvider` chỉ có `VerifyToken` (`usecase/auth/port.go:11`). Rakazo tự
+sinh `{connected_by_user_id}@cdp.invalid` — không bao giờ trùng, và Rakazo không có trang đăng nhập
+nên chỗ hiển thị email gần như không tồn tại. Thêm cột `connected_by_email` cộng migration chỉ để
+sửa một trường trang trí là không xứng; nếu sau này cần, CDP đã có Identity trong tay lúc nối.
 
 Endpoint thứ nhất cần thiết vì kéo thì phải biết kéo cho ai. Endpoint thứ hai cũng giải bài toán
 **liệt kê người dùng**: `listConnectedSlugs(userId)` cần một userId để hỏi, mà Rakazo không có cách
@@ -239,5 +246,12 @@ lưu phải là id của CDP. Nối làn Composio qua gateway.
    thiết kế này dựa vào nó, nhưng §5.3 của làn quảng cáo dựa vào tiền tố tên tool của nền tảng
    (`tiktok_`, `facebook_`), và cái đó **đã đo**: 246 tool `tiktok_`, 110 tool `facebook_`.
 3. **CDP đồng ý thêm hai endpoint liệt kê** ở §5.1, và đồng ý rằng đó là chỗ liệt kê duy nhất.
-4. **`owner_user_id` mà CDP trả về là cùng chuỗi mà Composio dùng làm entity id.** Nếu CDP dùng id
-   nội bộ khác với id đã dùng lúc `InitiateConnect`, cần một cột ánh xạ.
+4. **`connected_by_user_id` là cùng chuỗi mà CDP truyền cho Composio làm entity id.** `model_composio.go`
+   có *cả hai* cột `user_id` và `connected_by_user_id`; cần biết cột nào là chuỗi đã gửi Composio. Nếu
+   là `user_id` thì payload §5.1 phải trả cột đó cho làn Composio, không phải `connected_by_user_id`.
+   Đây là giả định duy nhất còn có thể phá làn Composio — hỏi người viết `usecase/composio` là biết.
+
+5. **Kết nối quảng cáo thuộc tenant, không thuộc người** — nên "một bot cho người nối" (D4) nghĩa là
+   đồng nghiệp trong cùng tenant **không thấy** bot đó, dù tài khoản quảng cáo là của cả tenant. Đây là
+   lựa chọn có ý thức ngày 26/08, không phải sơ suất. Muốn cả tenant thấy thì phải cho `bots.userId`
+   nullable, việc đó lan rộng trong Rakazo.
