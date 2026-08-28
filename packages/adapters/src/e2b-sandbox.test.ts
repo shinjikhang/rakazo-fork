@@ -113,6 +113,46 @@ describe("E2B computer backend", () => {
     );
   });
 
+  it("surfaces a control stream setup failure as unavailable", async () => {
+    // Allocation must succeed so the failure lands in the control stream setup, not earlier.
+    const run = vi.fn(async (command: string) =>
+      command.includes("screen-assignments")
+        ? { exitCode: 0, stdout: "RAKAZO_SCREEN_INDEX=0", stderr: "", error: "" }
+        : { exitCode: 1, stdout: "", stderr: "x11vnc refused to start", error: "x11vnc refused" },
+    );
+    const desktop = {
+      sandboxId: "control-e2b-box",
+      display: ":0",
+      commands: { run },
+      getHost: (port: number) => `${port}-control.test`,
+      stream: {
+        start: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        getAuthKey: () => "screen-key",
+      },
+    } as unknown as Sandbox;
+    const sdk: E2BSandboxSdk = {
+      create: vi.fn(async () => desktop),
+      connect: vi.fn(async () => desktop),
+      pause: vi.fn(async () => undefined),
+    };
+    const provider = new E2BSandboxProvider("test-key", sdk);
+
+    await expect(
+      provider.connectScreen(
+        {
+          id: "control-e2b-box",
+          botId: "bot-1",
+          kind: "e2b" as const,
+          providerRef: "control-e2b-box",
+          fresh: false,
+        },
+        { view: "stream", interactive: true, controlToken: "lease-1" },
+        context,
+      ),
+    ).rejects.toThrow(ComputerScreenUnavailableError);
+  });
+
   it("prepares a reused computer idempotently", async () => {
     let profilesConfigured = false;
     const command = vi.fn(async (value: string) => {

@@ -737,13 +737,17 @@ export class E2BSandboxProvider implements SandboxProvider {
         "exit 1",
       ].join(" && ");
       const result = await this.runSetupCommand(desktop, command);
-      if (result.exitCode !== 0) throw new Error(result.stderr || "control stream failed to start");
+      if (result.exitCode !== 0) {
+        throw new ComputerScreenUnavailableError(result.stderr || "control stream failed to start");
+      }
     } else {
       const result = await this.runSetupCommand(
         desktop,
         extraDisplayControlStartCommand(layout, controlToken, password),
       );
-      if (result.exitCode !== 0) throw new Error(result.stderr || "control stream failed to start");
+      if (result.exitCode !== 0) {
+        throw new ComputerScreenUnavailableError(result.stderr || "control stream failed to start");
+      }
     }
     this.controlStreams.set(controlKey, { password, controlToken });
     return password;
